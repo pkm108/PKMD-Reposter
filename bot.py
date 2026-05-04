@@ -118,6 +118,10 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
+    # Let the commands framework see every message first, otherwise
+    # overriding on_message silently disables prefix commands like !classify.
+    await bot.process_commands(message)
+
     # Only act on the source channel
     if message.channel.id != SOURCE_CHANNEL_ID:
         return
