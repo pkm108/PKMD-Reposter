@@ -57,6 +57,40 @@ In any channel the bot can see, run:
 
 It will pull the most recent embed from the source channel and tell you which bucket it landed in.
 
+## Deploy to Railway
+
+The repo is already Railway-ready: `Procfile`, `.python-version`, and `requirements.txt` are all set up. The bot runs as a **worker** process (no web port, no health checks).
+
+### One-time setup
+
+1. Push this folder to a **private** GitHub repo. The included `.gitignore` keeps `.env` out, so your token won't leak — but double-check that `.env` is not in the repo before pushing.
+2. Go to https://railway.app → **New Project → Deploy from GitHub repo** → pick the repo.
+3. Railway will start building. While it does, click the service → **Variables** tab and add:
+
+   | Variable             | Value                              |
+   |----------------------|------------------------------------|
+   | `DISCORD_TOKEN`      | your bot token                     |
+   | `SOURCE_CHANNEL_ID`  | source channel ID                  |
+   | `TCG_CHANNEL_ID`     | TCG destination channel ID         |
+   | `COLLAB_CHANNEL_ID`  | collab destination channel ID      |
+   | `USE_WEBHOOKS`       | `true` (or `false`)                |
+
+4. The first build will likely fail because the variables weren't set yet — once you've added them, hit **Deployments → Redeploy** (or push any commit) and it'll start cleanly.
+
+### Verifying it works
+
+- **Deployments → View Logs** should show `Logged in as <BotName>` and `Watching channel <id>`.
+- When a ping fires in the source channel you'll see `Forwarded [tcg] '...' -> #channel-name` lines.
+- If you see `Destination channel ... not found / not accessible`, the bot isn't in that server or doesn't have View Channel permission there.
+
+### Updating the bot later
+
+Just push to the GitHub repo — Railway auto-deploys on every push to the default branch. To roll back, use **Deployments → ⋯ → Redeploy** on an older deployment.
+
+### Cost note
+
+A Discord bot like this uses very little memory and CPU — it'll comfortably fit in Railway's free trial credits and the Hobby plan's monthly allowance. If you want to confirm pricing, check railway.app/pricing as the free tier terms have shifted a few times.
+
 ## Tweaking the rules
 
 The collab match is one regex at the top of `bot.py`:
