@@ -117,6 +117,15 @@ async def on_ready():
 
 
 @bot.event
+async def on_command_error(ctx: commands.Context, error: commands.CommandError):
+    # Other bots / users in the server use !-prefixed commands too. Ignore
+    # any prefix that isn't one of ours instead of logging a stack trace.
+    if isinstance(error, commands.CommandNotFound):
+        return
+    log.exception("Command error: %s", error)
+
+
+@bot.event
 async def on_message(message: discord.Message):
     # Let the commands framework see every message first, otherwise
     # overriding on_message silently disables prefix commands like !classify.
