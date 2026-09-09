@@ -294,7 +294,10 @@ async function handlePC(ctx) {
     return { skipped: "non-us" };
   const sku = pcSku(text);
   if (!sku) return { skipped: "no-sku" };
-  if (!dedupe("pc:" + sku)) return { skipped: "dupe" };
+  const p = rule.params || {};
+  if (!keywordsOk(p, productText(embeds, ctx.content))) return { skipped: "keywords" };
+  const gate = confirmGate(ctx, p, "pc:" + sku);
+  if (gate) return { ...gate, sku };
   const src = (embeds && embeds[0]) || {};
   const title = (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
     || (src.title && !/checkout|success|carted/i.test(src.title) ? src.title : null)
@@ -322,6 +325,15 @@ function walmartPid(url) {
   return m ? m[1] : null;
 }
 
+function productName(embeds) {
+  for (const e of embeds || []) {
+    const f = (e.fields || []).find((x) => /product|item|title|name/i.test(x.name || ""));
+    if (f && f.value) return String(f.value).replace(/\[|\]\(.*?\)/g, "").trim();
+    if (e.title && !/checkout|logs|carted|success|restock/i.test(e.title)) return e.title;
+  }
+  return null;
+}
+
 function walmartItems(text, embeds) {
   const out = [];
   const links = urlsIn(text).filter((u) => /walmart\.com\/ip\//i.test(u));
@@ -330,7 +342,7 @@ function walmartItems(text, embeds) {
   for (const u of links) {
     const pid = walmartPid(u);
     if (!pid) continue;
-    const t = titled.get(u) || ((embeds && embeds[0] && embeds[0].title) || "Walmart item");
+    const t = titled.get(u) || productName(embeds) || "Walmart item";
     out.push({ pid, url: `https://www.walmart.com/ip/${pid}`, title: String(t).slice(0, 90) });
   }
   return out;
@@ -353,10 +365,22 @@ function walmartEmbed(items) {
 
 /* batching state lives in the router (per-rule buffers); handler just collects */
 async function handleWalmart(ctx) {
-  const items = walmartItems(ctx.text, ctx.embeds).filter((it) => ctx.dedupe("wm:" + it.pid));
-  if (!items.length) return { skipped: "no-links" };
-  ctx.batch(items); // router flushes on size/time
-  return { batched: items.length };
+  const p = ctx.rule.params || {};
+  const ptext = productText(ctx.embeds, ctx.content);
+  const mode = p.filter || "off";
+  if (mode === "tcg" && !looksTCG(ptext)) return { skipped: "filter" };
+  if (mode === "pokemon" && !looksPokemon(ptext)) return { skipped: "filter" };
+  if (!keywordsOk(p, ptext)) return { skipped: "keywords" };
+  const found = walmartItems(ctx.text, ctx.embeds);
+  if (!found.length) return { skipped: "no-links" };
+  const kept = [], gates = [];
+  for (const it of found) {
+    const gate = confirmGate(ctx, p, "wm:" + it.pid);
+    if (gate) gates.push(gate); else kept.push(it);
+  }
+  if (!kept.length) return { ...gates[0], items: found.length };
+  ctx.batch(kept); // router flushes on size/time
+  return { batched: kept.length };
 }
 
 /* ---------------- keyword forward pipeline ---------------- */

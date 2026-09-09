@@ -17,7 +17,7 @@ intent review per year instead of four.
 · `/route list` · `/route toggle id` · `/route remove id` · `/reposter` (status/stats).
 Multiple routes may share one source channel (fan-out). Rules live in SQLite on the volume.
 
-**Amazon & Target route params:** `filter` = `tcg` (default: Pokemon TCG products only) | `pokemon`
+**Amazon, Target & Walmart route params** (keywords/confirm also apply to pc): `filter` = `tcg` (default: Pokemon TCG products only) | `pokemon`
 (any Pokemon) | `off`. `confirm:N` posts an item only after N pings for the same ASIN within
 `window` minutes (default 10) — for checkout/monitor feeds where 1-2 pings mean instant sellout.
 After a confirmed post the ASIN is muted for `cooldown` minutes (default 60). Example:
