@@ -13,7 +13,7 @@
  *   PORT            health endpoint (Railway)
  */
 const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require("discord.js");
-const Database = require("better-sqlite3");
+const { DatabaseSync } = require("node:sqlite");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -30,8 +30,8 @@ if (!TOKEN || !GUILD_ID) { console.error("[reposter] DISCORD_TOKEN and GUILD_ID 
 
 /* ---------- storage (volume-guarded like the main app) ---------- */
 try { fs.mkdirSync(path.dirname(DB_PATH), { recursive: true }); } catch (_) {}
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
+const db = new DatabaseSync(DB_PATH);
+db.exec("PRAGMA journal_mode = WAL;");
 db.exec(`CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL CHECK(kind IN ('amazon','pc','walmart','forward')),

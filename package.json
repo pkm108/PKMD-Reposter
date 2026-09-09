@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "description": "PKMD unified Reposter - amazon | pc | walmart | forward pipelines in one bot",
   "main": "reposter.js",
-  "scripts": { "start": "node reposter.js" },
+  "scripts": {
+    "start": "node reposter.js"
+  },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
     "discord.js": "^14.16.0",
     "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=22.5"
   }
 }
