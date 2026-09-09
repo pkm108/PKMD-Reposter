@@ -117,6 +117,20 @@ function burstGate(rec, now, { need, windowMs, cooldownMs }) {
   return { allow: true };
 }
 function resetBursts() { BURST.clear(); }
+/* Shared gate: burst-confirm + cooldown when params.confirm > 1, else plain dedupe. */
+function confirmGate(ctx, p, itemKey) {
+  const need = Math.max(1, parseInt(p.confirm, 10) || 1);
+  if (need > 1) {
+    const windowMs = Math.max(1, parseInt(p.window, 10) || 10) * 60000;
+    const cooldownMs = Math.max(1, parseInt(p.cooldown, 10) || 60) * 60000;
+    const g = burstGate(burstFor(ctx.rule.id + ":" + itemKey), ctx.now || Date.now(), { need, windowMs, cooldownMs });
+    if (!g.allow) return g.reason === "warming"
+      ? { skipped: "warming", count: g.count, need }
+      : { skipped: "cooldown", until: g.until };
+    return null;
+  }
+  return ctx.dedupe(itemKey) ? null : { skipped: "dupe" };
+}
 
 async function handleAmazon(ctx) {
   const { embeds, text, rule, post, dedupe } = ctx;
@@ -127,15 +141,8 @@ async function handleAmazon(ctx) {
   const cand = urlsIn(text).filter(amazonHostOk);
   const asin = cand.map(asinOf).find(Boolean);
   if (!asin) return { skipped: "no-asin" };
-  const need = Math.max(1, parseInt(p.confirm, 10) || 1);
-  if (need > 1) {
-    const windowMs = Math.max(1, parseInt(p.window, 10) || 10) * 60000;
-    const cooldownMs = Math.max(1, parseInt(p.cooldown, 10) || 60) * 60000;
-    const g = burstGate(burstFor(rule.id + ":" + asin), ctx.now || Date.now(), { need, windowMs, cooldownMs });
-    if (!g.allow) return g.reason === "warming"
-      ? { skipped: "warming", asin, count: g.count, need }
-      : { skipped: "cooldown", asin, until: g.until };
-  } else if (!dedupe("amz:" + asin)) return { skipped: "dupe" };
+  const gate = confirmGate(ctx, p, "amz:" + asin);
+  if (gate) return { ...gate, asin };
   const src = (embeds && embeds[0]) || {};
   const title = (src.title && !/checkout|success/i.test(src.title) ? src.title : null)
     || (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
@@ -163,6 +170,64 @@ async function handleAmazon(ctx) {
     }],
   });
   return { posted: true, asin };
+}
+
+/* ---------------- target pipeline ---------------- */
+/* Refract checkout-log feeds → branded Target links.
+   Source links look like target.com/p/~/-/A-<TCIN>; reposts use /p/<slug>/A-<TCIN>
+   (Target ignores the slug segment). Same filter + confirm/cooldown gates as amazon. */
+
+function targetHostOk(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return h === "target.com" || h.endsWith(".target.com");
+  } catch (_) { return false; }
+}
+
+function targetTcin(text) {
+  for (const u of urlsIn(text)) {
+    if (!targetHostOk(u)) continue;
+    const m = String(u).match(/\/A-(\d{6,12})(?:[/?#]|$)/i);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function targetUrl(tcin, slug = "pkmd") {
+  return `https://www.target.com/p/${slugify(slug) || "pkmd"}/A-${tcin}`;
+}
+
+async function handleTarget(ctx) {
+  const { embeds, text, rule, post } = ctx;
+  const p = rule.params || {};
+  const mode = p.filter || "tcg";
+  if (mode === "tcg" && !looksTCG(text)) return { skipped: "filter" };
+  if (mode === "pokemon" && !looksPokemon(text)) return { skipped: "filter" };
+  const tcin = targetTcin(text);
+  if (!tcin) return { skipped: "no-tcin" };
+  const gate = confirmGate(ctx, p, "tgt:" + tcin);
+  if (gate) return { ...gate, tcin };
+  const src = (embeds && embeds[0]) || {};
+  const title = (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
+    || (src.title && !/checkout|success|carted|logs/i.test(src.title) ? src.title : null)
+    || "Target restock";
+  const link = targetUrl(tcin, p.slug);
+  const price = firstPrice(embeds, text);
+  await post({
+    embeds: [{
+      title: String(title).replace(/\[|\]\(.*?\)/g, "").slice(0, 240),
+      url: link,
+      color: 0xcc0000,
+      thumbnail: firstImage(embeds) ? { url: firstImage(embeds) } : undefined,
+      fields: [
+        { name: "Price", value: price || "\u2014", inline: true },
+        { name: "Buy Now", value: `\uD83C\uDFAF [Target](${link})`, inline: true },
+        { name: "\u200b", value: `\u27A1\uFE0F ${link}`, inline: false },
+      ],
+      footer: { text: "Pokemon Deals & News - PKMD #ad" },
+    }],
+  });
+  return { posted: true, tcin };
 }
 
 /* ---------------- pokemon center pipeline ---------------- */
@@ -274,10 +339,11 @@ async function handleForward(ctx) {
   return { posted: true };
 }
 
-const HANDLERS = { amazon: handleAmazon, pc: handlePC, walmart: handleWalmart, forward: handleForward };
+const HANDLERS = { amazon: handleAmazon, target: handleTarget, pc: handlePC, walmart: handleWalmart, forward: handleForward };
 
 module.exports = {
   HANDLERS, allText, firstImage, firstPrice, urlsIn, looksPokemon, slugify,
-  asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, burstGate, burstFor, resetBursts, pcSku, pcUrl,
+  asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, burstGate, burstFor, resetBursts, confirmGate,
+  targetHostOk, targetTcin, targetUrl, pcSku, pcUrl,
   walmartPid, walmartItems, reduceBatch, walmartEmbed, forwardMatch,
 };

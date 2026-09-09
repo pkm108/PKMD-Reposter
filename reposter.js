@@ -161,7 +161,7 @@ client.on(Events.MessageCreate, async (msg) => {
 });
 
 /* ---------- slash commands ---------- */
-const KINDS = ["amazon", "pc", "walmart", "forward"];
+const KINDS = ["amazon", "target", "pc", "walmart", "forward"];
 const COMMANDS = [
   {
     name: "route", description: "Manage reposter routes",
@@ -172,10 +172,10 @@ const COMMANDS = [
         { type: 7, name: "source", description: "Source channel (monitor feed)", required: true },
         { type: 7, name: "target", description: "Target channel (where reposts go)", required: true },
         { type: 3, name: "keywords", description: "forward only: comma-separated keywords" },
-        { type: 3, name: "filter", description: "amazon only: tcg (default), pokemon, or off", choices: [{ name: "tcg", value: "tcg" }, { name: "pokemon", value: "pokemon" }, { name: "off", value: "off" }] },
-        { type: 4, name: "confirm", description: "amazon only: post after N rapid pings for the same item (default 1 = immediate)" },
-        { type: 4, name: "cooldown", description: "amazon only: minutes to mute an item after it posts (default 60)" },
-        { type: 4, name: "window", description: "amazon only: rapid-succession window in minutes (default 10)" },
+        { type: 3, name: "filter", description: "amazon/target: tcg (default), pokemon, or off", choices: [{ name: "tcg", value: "tcg" }, { name: "pokemon", value: "pokemon" }, { name: "off", value: "off" }] },
+        { type: 4, name: "confirm", description: "amazon/target: post after N rapid pings for the same item (default 1 = immediate)" },
+        { type: 4, name: "cooldown", description: "amazon/target: minutes to mute an item after it posts (default 60)" },
+        { type: 4, name: "window", description: "amazon/target: rapid-succession window in minutes (default 10)" },
       ]},
       { type: 1, name: "list", description: "List routes" },
       { type: 1, name: "remove", description: "Remove a route", options: [{ type: 4, name: "id", description: "Route id", required: true }] },
