@@ -21,17 +21,42 @@ const { HANDLERS, allText, reduceBatch, walmartEmbed } = require("./pipelines");
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
-const DB_PATH = process.env.DB_PATH || "/data/reposter.db";
+const DB_PATH = String(process.env.DB_PATH || "/data/reposter.db").trim().replace(/^["']|["']$/g, "");
 const DRY = process.env.DRY_RUN === "1";
 const DEDUPE_MS = (parseInt(process.env.DEDUPE_MINUTES || "30", 10)) * 60000;
 const BATCH_N = parseInt(process.env.WALMART_BATCH_SIZE || "5", 10);
 const BATCH_S = parseInt(process.env.WALMART_BATCH_SECONDS || "20", 10);
 if (!TOKEN || !GUILD_ID) { console.error("[reposter] DISCORD_TOKEN and GUILD_ID are required"); process.exit(1); }
 
-/* ---------- storage (volume-guarded like the main app) ---------- */
-try { fs.mkdirSync(path.dirname(DB_PATH), { recursive: true }); } catch (_) {}
-const db = new DatabaseSync(DB_PATH);
-db.exec("PRAGMA journal_mode = WAL;");
+/* ---------- storage (volume-guarded like the main app) ----------
+   Railway can start the container a beat before the volume finishes mounting,
+   so we probe-and-retry instead of crashing into a restart loop. */
+function openDb() {
+  const dir = path.dirname(DB_PATH);
+  const MAX = 15;
+  for (let i = 1; i <= MAX; i++) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, ".rw-probe"), String(Date.now()));
+      fs.unlinkSync(path.join(dir, ".rw-probe"));
+      const d = new DatabaseSync(DB_PATH);
+      d.exec("PRAGMA journal_mode = WAL;");
+      console.log(`[reposter] db open at ${DB_PATH} (attempt ${i})`);
+      return d;
+    } catch (e) {
+      console.error(`[reposter] db not ready (attempt ${i}/${MAX}) — ${e.message} · DB_PATH=${JSON.stringify(DB_PATH)} dir=${JSON.stringify(dir)}`);
+      if (i === MAX) {
+        console.error("[reposter] FATAL: cannot open database.");
+        console.error("  Check: (1) service Settings \u2192 Volumes shows a volume with Mount Path exactly /data");
+        console.error("         (2) Variables \u2192 DB_PATH is exactly /data/reposter.db \u2014 no quotes, no spaces");
+        process.exit(1);
+      }
+      const ms = 2000;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); // sync sleep before client exists
+    }
+  }
+}
+const db = openDb();
 db.exec(`CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL CHECK(kind IN ('amazon','pc','walmart','forward')),
