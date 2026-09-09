@@ -120,6 +120,23 @@ function amzLinks(asin, tag = AMAZON_TAG) {
   };
 }
 
+/* Shared PKMD alert layout — mirrors the Amazon embed structure so every
+   retailer’s repost looks like part of the same family. */
+function richAlertEmbed({ title, url, price, image, color, retailer, dot }) {
+  return {
+    title: String(title || "Restock alert").slice(0, 240),
+    url,
+    color,
+    thumbnail: image ? { url: image } : undefined,
+    fields: [
+      { name: "Price", value: price || "\u2014", inline: true },
+      { name: "Buy Now", value: `${dot} [${retailer}](${url})`, inline: true },
+      { name: "\u200b", value: `\u27A1\uFE0F ${url}`, inline: false },
+    ],
+    footer: { text: "Pokemon Deals & News - PKMD #ad" },
+  };
+}
+
 /* TCG-only filter: Pokémon AND a card-product signal in the text. */
 const TCG_RE = /(\btcg\b|trading\s*cards?|booster|elite\s*trainer|\betbs?\b|collection|\btins?\b|blister|\bdecks?\b|premium|box\s*set|\bcards\b|\bpsa\b|graded)/i;
 function looksTCG(text) { return looksPokemon(text) && TCG_RE.test(fold(text)); }
@@ -188,6 +205,8 @@ async function handleAmazon(ctx) {
     || "Amazon deal";
   const price = firstPrice(embeds, text);
   const L = amzLinks(asin, p.tag || AMAZON_TAG);
+  const ov = ctx.linkFor ? ctx.linkFor("amazon", asin) : null;
+  if (ov) L.regular = ov; // preloaded link becomes the primary/title/arrow link
   await post({
     embeds: [{
       title: String(title).replace(/\[|\]\(.*?\)/g, "").slice(0, 240),
@@ -252,21 +271,14 @@ async function handleTarget(ctx) {
   const title = (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
     || (src.title && !/checkout|success|carted|logs/i.test(src.title) ? src.title : null)
     || "Target restock";
-  const link = targetUrl(tcin, p.slug);
+  const link = (ctx.linkFor ? ctx.linkFor("target", tcin) : null) || targetUrl(tcin, p.slug);
   const price = firstPrice(embeds, text);
   await post({
-    embeds: [{
-      title: String(title).replace(/\[|\]\(.*?\)/g, "").slice(0, 240),
-      url: link,
-      color: 0xcc0000,
-      thumbnail: firstImage(embeds) ? { url: firstImage(embeds) } : undefined,
-      fields: [
-        { name: "Price", value: price || "\u2014", inline: true },
-        { name: "Buy Now", value: `\uD83C\uDFAF [Target](${link})`, inline: true },
-        { name: "\u200b", value: `\u27A1\uFE0F ${link}`, inline: false },
-      ],
-      footer: { text: "Pokemon Deals & News - PKMD #ad" },
-    }],
+    embeds: [richAlertEmbed({
+      title: String(title).replace(/\[|\]\(.*?\)/g, ""),
+      url: link, price, image: firstImage(embeds),
+      color: 0xcc0000, retailer: "Target", dot: "\uD83C\uDFAF",
+    })],
   });
   return { posted: true, tcin };
 }
@@ -303,15 +315,13 @@ async function handlePC(ctx) {
     || (src.title && !/checkout|success|carted/i.test(src.title) ? src.title : null)
     || "Pokémon Center";
   const clean = String(title).replace(/\[|\]\(.*?\)/g, "").slice(0, 240);
-  const link = pcUrl(sku, clean);
+  const link = (ctx.linkFor ? ctx.linkFor("pc", sku) : null) || pcUrl(sku, clean);
   await post({
-    embeds: [{
-      title: clean, url: link,
-      description: `${firstPrice(embeds, text) ? `**${firstPrice(embeds, text)}** · ` : ""}[View at Pokémon Center](${link})`,
-      color: 0x35d0ba,
-      image: firstImage(embeds) ? { url: firstImage(embeds) } : undefined,
-      footer: { text: "PKMD · Pokémon Center US" },
-    }],
+    embeds: [richAlertEmbed({
+      title: clean, url: link, price: firstPrice(embeds, text),
+      image: firstImage(embeds), color: 0x35d0ba,
+      retailer: "Pok\u00e9mon Center", dot: "\uD83D\uDECD\uFE0F",
+    })],
   });
   return { posted: true, sku };
 }
@@ -354,13 +364,11 @@ function reduceBatch(items) {
   return uniq.slice(0, 20);
 }
 
-function walmartEmbed(items) {
-  return {
-    title: `Walmart · ${items.length} live link${items.length === 1 ? "" : "s"}`,
-    description: items.map((it, i) => `**${i + 1}.** [${it.title}](${it.url})`).join("\n").slice(0, 3900),
-    color: 0x0071dc,
-    footer: { text: "PKMD · batched to keep the channel clean" },
-  };
+function walmartEmbeds(items) {
+  return items.map((it) => richAlertEmbed({
+    title: it.title, url: it.url, price: it.price || null, image: it.image || null,
+    color: 0x0071dc, retailer: "Walmart", dot: "\uD83D\uDFE6",
+  }));
 }
 
 /* batching state lives in the router (per-rule buffers); handler just collects */
@@ -373,6 +381,11 @@ async function handleWalmart(ctx) {
   if (!keywordsOk(p, ptext)) return { skipped: "keywords" };
   const found = walmartItems(ctx.text, ctx.embeds);
   if (!found.length) return { skipped: "no-links" };
+  if (ctx.linkFor) for (const it of found) { const ov = ctx.linkFor("walmart", it.pid); if (ov) it.url = ov; }
+  if (found.length === 1) {
+    found[0].price = firstPrice(ctx.embeds, ctx.text) || null;
+    found[0].image = firstImage(ctx.embeds) || null;
+  }
   const kept = [], gates = [];
   for (const it of found) {
     const gate = confirmGate(ctx, p, "wm:" + it.pid);
@@ -410,5 +423,5 @@ module.exports = {
   HANDLERS, allText, firstImage, firstPrice, urlsIn, looksPokemon, slugify,
   asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, fold, burstGate, burstFor, resetBursts, confirmGate, productText, keywordsOk,
   targetHostOk, targetTcin, targetUrl, pcSku, pcUrl,
-  walmartPid, walmartItems, reduceBatch, walmartEmbed, forwardMatch,
+  walmartPid, walmartItems, reduceBatch, walmartEmbeds, richAlertEmbed, forwardMatch,
 };

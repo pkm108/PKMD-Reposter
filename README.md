@@ -22,6 +22,14 @@ Multiple routes may share one source channel (fan-out). Rules live in SQLite on 
 `window` minutes (default 10) — for checkout/monitor feeds where 1-2 pings mean instant sellout.
 After a confirmed post the ASIN is muted for `cooldown` minutes (default 60). Example:
 `/route add kind:amazon source:#monitor-feed target:#restock-alerts confirm:5 cooldown:60`
+**Preloaded affiliate links:** `/link set retailer:<amazon|target|walmart|pc> sku:<id> url:<link>`
+stores a full replacement link per SKU (ASIN / TCIN / Walmart item ID / PC SKU) in SQLite on the
+volume. When a source ping matches that SKU, every pipeline reposts YOUR link instead of the
+source's — Amazon overrides the primary/title/arrow link (Cart / Other Sellers / Business stay
+tag-built), Target/Walmart/PC replace the link outright. `/link list` and `/link remove` manage them.
+This pairs with the app's Admin → Links locks: `/link` controls Discord reposts, the app lock
+controls app alerts.
+
 Target routes read Refract checkout embeds, extract the TCIN from `/p/~/-/A-<TCIN>` links,
 and repost as branded `https://www.target.com/p/pkmd/A-<TCIN>` (override the slug with `slug`
 in ROUTES_JSON if ever needed). (To change an existing route's params: `/route remove` then re-add.)

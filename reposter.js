@@ -17,7 +17,7 @@ const { DatabaseSync } = require("node:sqlite");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const { HANDLERS, allText, reduceBatch, walmartEmbed } = require("./pipelines");
+const { HANDLERS, allText, reduceBatch, walmartEmbeds } = require("./pipelines");
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const GUILD_ID = process.env.GUILD_ID;
@@ -99,6 +99,22 @@ CREATE TABLE IF NOT EXISTS stats (k TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT
     console.log("[reposter] rules table migrated \u2014 kinds now: " + RULE_KINDS.join(", "));
   } catch (e) { db.exec("ROLLBACK"); throw e; }
 })();
+db.exec(`CREATE TABLE IF NOT EXISTS links (
+  retailer TEXT NOT NULL, sku TEXT NOT NULL, url TEXT NOT NULL,
+  PRIMARY KEY (retailer, sku)
+);`);
+const LINKS = new Map();
+const normSku = (retailer, sku) => {
+  const s = String(sku || "").trim();
+  return String(retailer || "").toLowerCase() === "amazon" ? s.toUpperCase() : s;
+};
+const linkKey = (retailer, sku) => String(retailer || "").toLowerCase() + ":" + normSku(retailer, sku);
+function loadLinks() {
+  LINKS.clear();
+  for (const row of db.prepare("SELECT retailer, sku, url FROM links").all())
+    LINKS.set(linkKey(row.retailer, row.sku), row.url);
+}
+loadLinks();
 const bump = db.prepare("INSERT INTO stats(k,v) VALUES(?,1) ON CONFLICT(k) DO UPDATE SET v=v+1");
 const ruleRows = () => db.prepare("SELECT * FROM rules ORDER BY id").all()
   .map((r) => ({ ...r, params: JSON.parse(r.params || "{}") }));
@@ -140,7 +156,9 @@ function batchFor(rule, client) {
       clearTimeout(b.timer); buffers.delete(rule.id);
       const uniq = reduceBatch(b.items);
       if (!uniq.length) return;
-      await send(client, rule.target_channel_id, { embeds: [walmartEmbed(uniq)] }, rule);
+      const embeds = walmartEmbeds(uniq);
+      for (let i = 0; i < embeds.length; i += 10)
+        await send(client, rule.target_channel_id, { embeds: embeds.slice(i, i + 10) }, rule);
       bump.run("posted:walmart");
     };
     if (b.items.length >= BATCH_N) flush().catch((e) => console.error("[walmart flush]", e.message));
@@ -174,6 +192,7 @@ client.on(Events.MessageCreate, async (msg) => {
     for (const rule of rules) {
       const ctx = {
         text, embeds, content, rule, dedupe, messageId: msg.id,
+        linkFor: (rt, sk) => LINKS.get(linkKey(rt, sk)) || null,
         post: (payload) => send(client, rule.target_channel_id, payload, rule).then(() => bump.run("posted:" + rule.kind)),
         batch: batchFor(rule, client),
       };
@@ -207,6 +226,22 @@ const COMMANDS = [
       { type: 1, name: "toggle", description: "Enable/disable a route", options: [{ type: 4, name: "id", description: "Route id", required: true }] },
     ],
   },
+  {
+    name: "link", description: "Preloaded affiliate links per retailer + SKU",
+    default_member_permissions: String(PermissionFlagsBits.ManageGuild),
+    options: [
+      { type: 1, name: "set", description: "Save an affiliate link for a SKU \u2014 reposts use it instead of the source link", options: [
+        { type: 3, name: "retailer", description: "Retailer", required: true, choices: ["amazon", "target", "walmart", "pc"].map((k) => ({ name: k, value: k })) },
+        { type: 3, name: "sku", description: "ASIN / TCIN / Walmart item ID / PC SKU", required: true },
+        { type: 3, name: "url", description: "Full affiliate link to push", required: true },
+      ] },
+      { type: 1, name: "remove", description: "Remove a saved link", options: [
+        { type: 3, name: "retailer", description: "Retailer", required: true, choices: ["amazon", "target", "walmart", "pc"].map((k) => ({ name: k, value: k })) },
+        { type: 3, name: "sku", description: "SKU to clear", required: true },
+      ] },
+      { type: 1, name: "list", description: "List saved links" },
+    ],
+  },
   { name: "reposter", description: "Reposter status", default_member_permissions: String(PermissionFlagsBits.ManageGuild) },
 ];
 
@@ -217,6 +252,29 @@ client.on(Events.InteractionCreate, async (i) => {
       const stats = db.prepare("SELECT k,v FROM stats ORDER BY k").all().map((s) => `${s.k}: ${s.v}`).join(" · ") || "no traffic yet";
       return i.reply({ flags: MessageFlags.Ephemeral, content:
         `**PKMD Reposter** · up ${Math.floor((Date.now() - START) / 60000)}m · ${RULES.filter((r) => r.enabled).length}/${RULES.length} routes on${DRY ? " · **DRY RUN**" : ""}\n${stats}` });
+    }
+    if (i.commandName === "link") {
+      const sub = i.options.getSubcommand();
+      if (sub === "set") {
+        const retailer = i.options.getString("retailer");
+        const sku = normSku(retailer, i.options.getString("sku"));
+        const url = i.options.getString("url").trim();
+        if (!/^https?:\/\//i.test(url)) return i.reply({ flags: MessageFlags.Ephemeral, content: "URL must start with http(s)://" });
+        db.prepare("INSERT INTO links(retailer,sku,url) VALUES(?,?,?) ON CONFLICT(retailer,sku) DO UPDATE SET url=excluded.url")
+          .run(retailer, sku, url);
+        loadLinks();
+        return i.reply({ flags: MessageFlags.Ephemeral, content: `Saved \u2014 **${retailer}** \`${sku}\` will now repost with your preloaded link.` });
+      }
+      if (sub === "remove") {
+        const retailer = i.options.getString("retailer");
+        const sku = normSku(retailer, i.options.getString("sku"));
+        const n = db.prepare("DELETE FROM links WHERE retailer=? AND sku=?").run(retailer, sku).changes;
+        loadLinks();
+        return i.reply({ flags: MessageFlags.Ephemeral, content: n ? `Removed **${retailer}** \`${sku}\`.` : "No such link." });
+      }
+      const rows = db.prepare("SELECT retailer, sku, url FROM links ORDER BY retailer, sku").all();
+      return i.reply({ flags: MessageFlags.Ephemeral, content:
+        rows.map((x) => `**${x.retailer}** \`${x.sku}\` \u2192 ${x.url}`).join("\n").slice(0, 1900) || "No preloaded links yet \u2014 `/link set`." });
     }
     if (i.commandName !== "route") return;
     const sub = i.options.getSubcommand();
