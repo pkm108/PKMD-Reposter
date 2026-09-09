@@ -32,16 +32,23 @@ if (!TOKEN || !GUILD_ID) { console.error("[reposter] DISCORD_TOKEN and GUILD_ID 
    Railway can start the container a beat before the volume finishes mounting,
    so we probe-and-retry instead of crashing into a restart loop. */
 function openDb() {
-  const dir = path.dirname(DB_PATH);
+  // Self-heal the classic misconfig: volume mounted AT the file path, making
+  // DB_PATH a directory. Storing inside it is still on the volume = persistent.
+  let target = DB_PATH;
+  try { if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+    target = path.join(target, "reposter.db");
+    console.log(`[reposter] DB_PATH is a directory (volume mounted at the file path) \u2014 using ${target} instead. Tip: set the volume Mount Path to /data to make this warning go away.`);
+  } } catch (_) {}
+  const dir = path.dirname(target);
   const MAX = 15;
   for (let i = 1; i <= MAX; i++) {
     try {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, ".rw-probe"), String(Date.now()));
       fs.unlinkSync(path.join(dir, ".rw-probe"));
-      const d = new DatabaseSync(DB_PATH);
+      const d = new DatabaseSync(target);
       d.exec("PRAGMA journal_mode = WAL;");
-      console.log(`[reposter] db open at ${DB_PATH} (attempt ${i})`);
+      console.log(`[reposter] db open at ${target} (attempt ${i})`);
       return d;
     } catch (e) {
       console.error(`[reposter] db not ready (attempt ${i}/${MAX}) — ${e.message} · DB_PATH=${JSON.stringify(DB_PATH)} dir=${JSON.stringify(dir)}`);
