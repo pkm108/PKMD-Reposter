@@ -80,6 +80,18 @@ function affiliateUrl(asin, tag = AMAZON_TAG) {
   return `https://www.amazon.com/dp/${asin}?tag=${encodeURIComponent(tag)}`;
 }
 
+const AMZ_SELLER = "ATVPDKIKX0DER";        // Amazon.com retail
+const AMZ_BIZ_SELLER = "A2Q1LRYTXHYQ2K";   // Amazon Business
+function amzLinks(asin, tag = AMAZON_TAG) {
+  const t = encodeURIComponent(tag);
+  return {
+    regular:  `https://www.amazon.com/gp/product/${asin}?smid=${AMZ_SELLER}&tag=${t}&psc=1`,
+    cart:     `https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=${asin}&Quantity.1=1&tag=${t}&merchant=${AMZ_SELLER}&seller=${AMZ_SELLER}`,
+    offers:   `https://www.amazon.com/dp/${asin}?tag=${t}&merchant=${AMZ_SELLER}&seller=${AMZ_SELLER}&aod=1`,
+    business: `https://www.amazon.com/dp/${asin}?tag=${t}&merchant=${AMZ_BIZ_SELLER}&seller=${AMZ_BIZ_SELLER}`,
+  };
+}
+
 async function handleAmazon(ctx) {
   const { embeds, text, rule, post, dedupe } = ctx;
   const p = rule.params || {};
@@ -93,15 +105,25 @@ async function handleAmazon(ctx) {
     || (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
     || "Amazon deal";
   const price = firstPrice(embeds, text);
-  const link = affiliateUrl(asin, p.tag || AMAZON_TAG);
+  const L = amzLinks(asin, p.tag || AMAZON_TAG);
   await post({
     embeds: [{
       title: String(title).replace(/\[|\]\(.*?\)/g, "").slice(0, 240),
-      url: link,
-      description: `${price ? `**${price}** · ` : ""}[Buy on Amazon](${link})`,
+      url: L.regular,
       color: 0xf2b33d,
-      image: firstImage(embeds) ? { url: firstImage(embeds) } : undefined,
-      footer: { text: "PKMD · tap fast, deals die quick" },
+      thumbnail: firstImage(embeds) ? { url: firstImage(embeds) } : undefined,
+      fields: [
+        { name: "Price", value: price || "\u2014", inline: true },
+        { name: "Buy Now", value: `\uD83D\uDD35 [Amazon](${L.regular})`, inline: true },
+        { name: "\u200b", value: [
+          `\u27A1\uFE0F ${L.regular}`,
+          `\uD83D\uDED2 [Add to Cart](${L.cart})`,
+          `\uD83D\uDCCB [Other Sellers Tab](${L.offers})`,
+          `\uD83D\uDCBC [Amazon Business Link](${L.business})`,
+          `*Note: If the product doesn\u2019t appear at first, try the Add to Cart link or select Amazon from the \u201COther Sellers\u201D tab on the listing.*`,
+        ].join("\n\n"), inline: false },
+      ],
+      footer: { text: "Pokemon Deals & News - PKMD #ad" },
     }],
   });
   return { posted: true, asin };
@@ -220,6 +242,6 @@ const HANDLERS = { amazon: handleAmazon, pc: handlePC, walmart: handleWalmart, f
 
 module.exports = {
   HANDLERS, allText, firstImage, firstPrice, urlsIn, looksPokemon, slugify,
-  asinOf, amazonHostOk, affiliateUrl, pcSku, pcUrl,
+  asinOf, amazonHostOk, affiliateUrl, amzLinks, pcSku, pcUrl,
   walmartPid, walmartItems, reduceBatch, walmartEmbed, forwardMatch,
 };

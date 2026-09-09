@@ -12,7 +12,7 @@
  *   DEDUPE_MINUTES  default 30 · WALMART_BATCH_SIZE default 5 · WALMART_BATCH_SECONDS default 20
  *   PORT            health endpoint (Railway)
  */
-const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits } = require("discord.js");
+const { Client, GatewayIntentBits, Events, REST, Routes, PermissionFlagsBits, MessageFlags } = require("discord.js");
 const { DatabaseSync } = require("node:sqlite");
 const express = require("express");
 const fs = require("fs");
@@ -187,7 +187,7 @@ client.on(Events.InteractionCreate, async (i) => {
     if (!i.isChatInputCommand()) return;
     if (i.commandName === "reposter") {
       const stats = db.prepare("SELECT k,v FROM stats ORDER BY k").all().map((s) => `${s.k}: ${s.v}`).join(" · ") || "no traffic yet";
-      return i.reply({ ephemeral: true, content:
+      return i.reply({ flags: MessageFlags.Ephemeral, content:
         `**PKMD Reposter** · up ${Math.floor((Date.now() - START) / 60000)}m · ${RULES.filter((r) => r.enabled).length}/${RULES.length} routes on${DRY ? " · **DRY RUN**" : ""}\n${stats}` });
     }
     if (i.commandName !== "route") return;
@@ -201,28 +201,28 @@ client.on(Events.InteractionCreate, async (i) => {
       const info = db.prepare("INSERT INTO rules(kind,source_channel_id,target_channel_id,params,created_at) VALUES(?,?,?,?,?)")
         .run(kind, i.options.getChannel("source").id, i.options.getChannel("target").id, JSON.stringify(params), Date.now());
       reload();
-      return i.reply({ ephemeral: true, content: `Route **#${info.lastInsertRowid}** added: ${kind} <#${i.options.getChannel("source").id}> → <#${i.options.getChannel("target").id}>` });
+      return i.reply({ flags: MessageFlags.Ephemeral, content: `Route **#${info.lastInsertRowid}** added: ${kind} <#${i.options.getChannel("source").id}> → <#${i.options.getChannel("target").id}>` });
     }
     if (sub === "list") {
       const lines = RULES.map((r) => `**#${r.id}** ${r.enabled ? "🟢" : "⚪"} ${r.kind} <#${r.source_channel_id}> → <#${r.target_channel_id}>${r.params.keywords ? " · kw: " + r.params.keywords.join(", ") : ""}`);
-      return i.reply({ ephemeral: true, content: lines.join("\n") || "No routes yet — `/route add`." });
+      return i.reply({ flags: MessageFlags.Ephemeral, content: lines.join("\n") || "No routes yet — `/route add`." });
     }
     if (sub === "remove") {
       const n = db.prepare("DELETE FROM rules WHERE id=?").run(i.options.getInteger("id")).changes;
       reload();
-      return i.reply({ ephemeral: true, content: n ? `Route #${i.options.getInteger("id")} removed.` : "No such route." });
+      return i.reply({ flags: MessageFlags.Ephemeral, content: n ? `Route #${i.options.getInteger("id")} removed.` : "No such route." });
     }
     if (sub === "toggle") {
       const id = i.options.getInteger("id");
       const r = db.prepare("SELECT enabled FROM rules WHERE id=?").get(id);
-      if (!r) return i.reply({ ephemeral: true, content: "No such route." });
+      if (!r) return i.reply({ flags: MessageFlags.Ephemeral, content: "No such route." });
       db.prepare("UPDATE rules SET enabled=? WHERE id=?").run(r.enabled ? 0 : 1, id);
       reload();
-      return i.reply({ ephemeral: true, content: `Route #${id} ${r.enabled ? "paused ⚪" : "enabled 🟢"}.` });
+      return i.reply({ flags: MessageFlags.Ephemeral, content: `Route #${id} ${r.enabled ? "paused ⚪" : "enabled 🟢"}.` });
     }
   } catch (e) {
     console.error("[cmd]", e.message);
-    if (i.isRepliable()) i.reply({ ephemeral: true, content: "Error: " + e.message }).catch(() => {});
+    if (i.isRepliable()) i.reply({ flags: MessageFlags.Ephemeral, content: "Error: " + e.message }).catch(() => {});
   }
 });
 
