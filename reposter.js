@@ -64,9 +64,11 @@ function openDb() {
   }
 }
 const db = openDb();
+const RULE_KINDS = ["amazon", "target", "pc", "walmart", "forward"];
+const KIND_LIST = RULE_KINDS.map((k) => `'${k}'`).join(",");
 db.exec(`CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL CHECK(kind IN ('amazon','pc','walmart','forward')),
+  kind TEXT NOT NULL CHECK(kind IN (${KIND_LIST})),
   source_channel_id TEXT NOT NULL,
   target_channel_id TEXT NOT NULL,
   params TEXT NOT NULL DEFAULT '{}',
@@ -74,6 +76,29 @@ db.exec(`CREATE TABLE IF NOT EXISTS rules (
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stats (k TEXT PRIMARY KEY, v INTEGER NOT NULL DEFAULT 0);`);
+/* Migrate an existing rules table whose CHECK predates newer kinds.
+   SQLite cannot alter a CHECK constraint, so rebuild-and-swap in one transaction. */
+(function migrateRuleKinds() {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='rules'").get();
+  if (!row || RULE_KINDS.every((k) => row.sql.includes(`'${k}'`))) return;
+  db.exec("BEGIN");
+  try {
+    db.exec(`CREATE TABLE rules_migr (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL CHECK(kind IN (${KIND_LIST})),
+      source_channel_id TEXT NOT NULL,
+      target_channel_id TEXT NOT NULL,
+      params TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    )`);
+    db.exec("INSERT INTO rules_migr (id,kind,source_channel_id,target_channel_id,params,enabled,created_at) SELECT id,kind,source_channel_id,target_channel_id,params,enabled,created_at FROM rules");
+    db.exec("DROP TABLE rules");
+    db.exec("ALTER TABLE rules_migr RENAME TO rules");
+    db.exec("COMMIT");
+    console.log("[reposter] rules table migrated \u2014 kinds now: " + RULE_KINDS.join(", "));
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
+})();
 const bump = db.prepare("INSERT INTO stats(k,v) VALUES(?,1) ON CONFLICT(k) DO UPDATE SET v=v+1");
 const ruleRows = () => db.prepare("SELECT * FROM rules ORDER BY id").all()
   .map((r) => ({ ...r, params: JSON.parse(r.params || "{}") }));
@@ -161,7 +186,7 @@ client.on(Events.MessageCreate, async (msg) => {
 });
 
 /* ---------- slash commands ---------- */
-const KINDS = ["amazon", "target", "pc", "walmart", "forward"];
+const KINDS = RULE_KINDS;
 const COMMANDS = [
   {
     name: "route", description: "Manage reposter routes",
