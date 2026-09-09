@@ -27,6 +27,27 @@ function allText(embeds, content) {
   return [content || "", ...(embeds || []).map(embedText)].join("\n");
 }
 
+/* Product-scoped text for FILTER decisions: titles, descriptions, and product-ish
+   field values only. Excludes footers/authors so a monitor named "Pokemon Deals &
+   Alerts" can't make every item look like a Pokémon product. */
+function productText(embeds, content) {
+  const parts = [content || ""];
+  for (const e of embeds || []) {
+    if (e.title) parts.push(e.title);
+    if (e.description) parts.push(e.description);
+    for (const f of e.fields || [])
+      if (/product|item|title|name/i.test(f.name || "")) parts.push(f.value || "");
+  }
+  return parts.join("\n");
+}
+
+function keywordsOk(p, ptext) {
+  const kws = Array.isArray(p.keywords) ? p.keywords.filter(Boolean) : [];
+  if (!kws.length) return true;
+  const t = fold(ptext).toLowerCase();
+  return kws.some((k) => t.includes(fold(k).toLowerCase()));
+}
+
 function firstImage(embeds) {
   for (const e of embeds || []) {
     if (e.image && e.image.url) return e.image.url;
@@ -49,8 +70,15 @@ function urlsIn(text) {
     .map((u) => u.replace(/[.,;!?]+$/, "")))];
 }
 
+/* Accent-fold so "Pokémon" matches "pokemon" (and user keywords typed either way). */
+function fold(s) {
+  return String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+/* True Pokémon signal only: brand names + Pokémon set names.
+   Generic TCG words (booster, etb, tcg…) belong to TCG_RE, not here —
+   otherwise any trading-card product "looks Pokémon". */
 function looksPokemon(text) {
-  return /pok[eé]mon|pkmn|\btcg\b|elite trainer|booster|\betb\b|prismatic|surging|scarlet|violet|151\b/i.test(text || "");
+  return /pokemon|pkmn|prismatic|surging sparks|scarlet & violet|\b151\b|mega evolution/i.test(fold(text));
 }
 
 function slugify(s) {
@@ -93,8 +121,8 @@ function amzLinks(asin, tag = AMAZON_TAG) {
 }
 
 /* TCG-only filter: Pokémon AND a card-product signal in the text. */
-const TCG_RE = /(\btcg\b|trading\s*cards?|booster|elite\s*trainer|\betbs?\b|collection|\btins?\b|blister|\bdecks?\b|premium|\bpacks?\b|box\s*set|bundle|\bcards\b|\bpsa\b|graded)/i;
-function looksTCG(text) { return looksPokemon(text) && TCG_RE.test(String(text || "")); }
+const TCG_RE = /(\btcg\b|trading\s*cards?|booster|elite\s*trainer|\betbs?\b|collection|\btins?\b|blister|\bdecks?\b|premium|box\s*set|\bcards\b|\bpsa\b|graded)/i;
+function looksTCG(text) { return looksPokemon(text) && TCG_RE.test(fold(text)); }
 
 /* Burst confirmation + per-item cooldown.
    need pings for the same (rule, asin) within windowMs before posting;
@@ -104,11 +132,20 @@ function burstFor(key) {
   if (BURST.size > 2000) { const now = Date.now();
     for (const [k, r] of BURST) if (!r.hits.length && now > r.coolUntil) BURST.delete(k); }
   let r = BURST.get(key);
-  if (!r) { r = { hits: [], coolUntil: 0 }; BURST.set(key, r); }
+  if (!r) { r = { hits: [], coolUntil: 0, ids: [] }; BURST.set(key, r); }
   return r;
 }
-function burstGate(rec, now, { need, windowMs, cooldownMs }) {
+function burstGate(rec, now, { need, windowMs, cooldownMs, msgId }) {
   if (now < rec.coolUntil) return { allow: false, reason: "cooldown", until: rec.coolUntil };
+  if (msgId) {
+    rec.ids = rec.ids || [];
+    if (rec.ids.includes(msgId)) {
+      rec.hits = rec.hits.filter((t) => now - t <= windowMs);
+      return { allow: false, reason: "warming", count: rec.hits.length, need, replay: true };
+    }
+    rec.ids.push(msgId);
+    if (rec.ids.length > 60) rec.ids.splice(0, rec.ids.length - 60);
+  }
   rec.hits = rec.hits.filter((t) => now - t <= windowMs);
   rec.hits.push(now);
   if (rec.hits.length < need) return { allow: false, reason: "warming", count: rec.hits.length, need };
@@ -123,9 +160,9 @@ function confirmGate(ctx, p, itemKey) {
   if (need > 1) {
     const windowMs = Math.max(1, parseInt(p.window, 10) || 10) * 60000;
     const cooldownMs = Math.max(1, parseInt(p.cooldown, 10) || 60) * 60000;
-    const g = burstGate(burstFor(ctx.rule.id + ":" + itemKey), ctx.now || Date.now(), { need, windowMs, cooldownMs });
+    const g = burstGate(burstFor(ctx.rule.id + ":" + itemKey), ctx.now || Date.now(), { need, windowMs, cooldownMs, msgId: ctx.messageId });
     if (!g.allow) return g.reason === "warming"
-      ? { skipped: "warming", count: g.count, need }
+      ? Object.assign({ skipped: "warming", count: g.count, need }, g.replay ? { replay: true } : {})
       : { skipped: "cooldown", until: g.until };
     return null;
   }
@@ -133,11 +170,13 @@ function confirmGate(ctx, p, itemKey) {
 }
 
 async function handleAmazon(ctx) {
-  const { embeds, text, rule, post, dedupe } = ctx;
+  const { embeds, text, content, rule, post, dedupe } = ctx;
   const p = rule.params || {};
+  const ptext = productText(embeds, content);
   const mode = p.filter || "tcg";
-  if (mode === "tcg" && !looksTCG(text)) return { skipped: "filter" };
-  if (mode === "pokemon" && !looksPokemon(text)) return { skipped: "filter" };
+  if (mode === "tcg" && !looksTCG(ptext)) return { skipped: "filter" };
+  if (mode === "pokemon" && !looksPokemon(ptext)) return { skipped: "filter" };
+  if (!keywordsOk(p, ptext)) return { skipped: "keywords" };
   const cand = urlsIn(text).filter(amazonHostOk);
   const asin = cand.map(asinOf).find(Boolean);
   if (!asin) return { skipped: "no-asin" };
@@ -198,11 +237,13 @@ function targetUrl(tcin, slug = "pkmd") {
 }
 
 async function handleTarget(ctx) {
-  const { embeds, text, rule, post } = ctx;
+  const { embeds, text, content, rule, post } = ctx;
   const p = rule.params || {};
+  const ptext = productText(embeds, content);
   const mode = p.filter || "tcg";
-  if (mode === "tcg" && !looksTCG(text)) return { skipped: "filter" };
-  if (mode === "pokemon" && !looksPokemon(text)) return { skipped: "filter" };
+  if (mode === "tcg" && !looksTCG(ptext)) return { skipped: "filter" };
+  if (mode === "pokemon" && !looksPokemon(ptext)) return { skipped: "filter" };
+  if (!keywordsOk(p, ptext)) return { skipped: "keywords" };
   const tcin = targetTcin(text);
   if (!tcin) return { skipped: "no-tcin" };
   const gate = confirmGate(ctx, p, "tgt:" + tcin);
@@ -343,7 +384,7 @@ const HANDLERS = { amazon: handleAmazon, target: handleTarget, pc: handlePC, wal
 
 module.exports = {
   HANDLERS, allText, firstImage, firstPrice, urlsIn, looksPokemon, slugify,
-  asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, burstGate, burstFor, resetBursts, confirmGate,
+  asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, fold, burstGate, burstFor, resetBursts, confirmGate, productText, keywordsOk,
   targetHostOk, targetTcin, targetUrl, pcSku, pcUrl,
   walmartPid, walmartItems, reduceBatch, walmartEmbed, forwardMatch,
 };

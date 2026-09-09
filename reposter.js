@@ -173,13 +173,13 @@ client.on(Events.MessageCreate, async (msg) => {
     const text = allText(embeds, content);
     for (const rule of rules) {
       const ctx = {
-        text, embeds, content, rule, dedupe,
+        text, embeds, content, rule, dedupe, messageId: msg.id,
         post: (payload) => send(client, rule.target_channel_id, payload, rule).then(() => bump.run("posted:" + rule.kind)),
         batch: batchFor(rule, client),
       };
       const out = await HANDLERS[rule.kind](ctx).catch((e) => ({ error: e.message }));
       if (out && out.error) console.error(`[rule#${rule.id} ${rule.kind}]`, out.error);
-      else if (out && !out.skipped) console.log(`[rule#${rule.id} ${rule.kind}]`, JSON.stringify(out));
+      else if (out && (!out.skipped || out.skipped === "warming" || out.skipped === "cooldown")) console.log(`[rule#${rule.id} ${rule.kind}]`, JSON.stringify(out));
       bump.run("seen:" + rule.kind);
     }
   } catch (e) { console.error("[router]", e.message); }
