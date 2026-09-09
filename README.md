@@ -13,7 +13,7 @@ intent review per year instead of four.
    Read History on source channels, Send Messages + Embed Links on targets.
 
 ## Routes
-`/route add kind:<amazon|target|pc|walmart|forward> source:#feed target:#public [keywords] [filter] [confirm] [cooldown] [window]`
+`/route add kind:<amazon|amazonca|target|pc|walmart|forward> source:#feed target:#public [keywords] [filter] [confirm] [cooldown] [window]`
 · `/route list` · `/route toggle id` · `/route remove id` · `/reposter` (status/stats).
 Multiple routes may share one source channel (fan-out). Rules live in SQLite on the volume.
 
@@ -22,6 +22,11 @@ Multiple routes may share one source channel (fan-out). Rules live in SQLite on 
 `window` minutes (default 10) — for checkout/monitor feeds where 1-2 pings mean instant sellout.
 After a confirmed post the ASIN is muted for `cooldown` minutes (default 60). Example:
 `/route add kind:amazon source:#monitor-feed target:#restock-alerts confirm:5 cooldown:60`
+**Amazon Canada:** `kind:amazonca` mirrors the US amazon pipeline for amazon.ca sources —
+same TCG filter and gates, links rebuilt as smid=A2EUQ1WTGCTBG2 (sold by Amazon.ca) with
+`AMAZON_CA_TAG` (default `stocktcg0d-20`) plus linkCode=sl2/ref_. Three-link block (regular /
+Add to Cart / Other Sellers); Amazon Business Canada can be added once you have its seller id.
+
 **Preloaded affiliate links:** `/link set retailer:<amazon|target|walmart|pc> sku:<id> url:<link>`
 stores a full replacement link per SKU (ASIN / TCIN / Walmart item ID / PC SKU) in SQLite on the
 volume. When a source ping matches that SKU, every pipeline reposts YOUR link instead of the

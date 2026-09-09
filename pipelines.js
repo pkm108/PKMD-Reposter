@@ -10,6 +10,7 @@
  */
 
 const AMAZON_TAG = process.env.AMAZON_TAG || "stocktcg-20";
+const AMAZON_CA_TAG = process.env.AMAZON_CA_TAG || "stocktcg0d-20";
 
 /* ---------------- shared helpers ---------------- */
 
@@ -110,6 +111,7 @@ function affiliateUrl(asin, tag = AMAZON_TAG) {
 
 const AMZ_SELLER = "ATVPDKIKX0DER";        // Amazon.com retail
 const AMZ_BIZ_SELLER = "A2Q1LRYTXHYQ2K";   // Amazon Business
+const AMZ_CA_SELLER = "A2EUQ1WTGCTBG2";    // Amazon.ca retail (CA marketplace id)
 function amzLinks(asin, tag = AMAZON_TAG) {
   const t = encodeURIComponent(tag);
   return {
@@ -117,6 +119,23 @@ function amzLinks(asin, tag = AMAZON_TAG) {
     cart:     `https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=${asin}&Quantity.1=1&tag=${t}&merchant=${AMZ_SELLER}&seller=${AMZ_SELLER}`,
     offers:   `https://www.amazon.com/dp/${asin}?tag=${t}&merchant=${AMZ_SELLER}&seller=${AMZ_SELLER}&aod=1`,
     business: `https://www.amazon.com/dp/${asin}?tag=${t}&merchant=${AMZ_BIZ_SELLER}&seller=${AMZ_BIZ_SELLER}`,
+  };
+}
+
+function amazonCaHostOk(url) {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return h === "amazon.ca" || h.endsWith(".amazon.ca");
+  } catch (_) { return false; }
+}
+
+function amzCaLinks(asin, tag = AMAZON_CA_TAG) {
+  const t = encodeURIComponent(tag);
+  const linkId = require("crypto").createHash("sha1").update("ca:" + asin + ":" + tag).digest("hex").slice(0, 32);
+  return {
+    regular: `https://www.amazon.ca/gp/product/${asin}?smid=${AMZ_CA_SELLER}&tag=${t}&psc=1&linkCode=sl2&linkId=${linkId}&ref_=as_li_ss_tl`,
+    cart:    `https://www.amazon.ca/gp/aws/cart/add.html?ASIN.1=${asin}&Quantity.1=1&tag=${t}&merchant=${AMZ_CA_SELLER}&seller=${AMZ_CA_SELLER}`,
+    offers:  `https://www.amazon.ca/dp/${asin}?tag=${t}&merchant=${AMZ_CA_SELLER}&seller=${AMZ_CA_SELLER}&aod=1`,
   };
 }
 
@@ -221,6 +240,51 @@ async function handleAmazon(ctx) {
           `\uD83D\uDED2 [Add to Cart](${L.cart})`,
           `\uD83D\uDCCB [Other Sellers Tab](${L.offers})`,
           `\uD83D\uDCBC [Amazon Business Link](${L.business})`,
+          `*Note: If the product doesn\u2019t appear at first, try the Add to Cart link or select Amazon from the \u201COther Sellers\u201D tab on the listing.*`,
+        ].join("\n\n"), inline: false },
+      ],
+      footer: { text: "Pokemon Deals & News - PKMD #ad" },
+    }],
+  });
+  return { posted: true, asin };
+}
+
+/* ---------------- amazon.ca pipeline ---------------- */
+async function handleAmazonCa(ctx) {
+  const { embeds, text, content, rule, post } = ctx;
+  const p = rule.params || {};
+  const ptext = productText(embeds, content);
+  const mode = p.filter || "tcg";
+  if (mode === "tcg" && !looksTCG(ptext)) return { skipped: "filter" };
+  if (mode === "pokemon" && !looksPokemon(ptext)) return { skipped: "filter" };
+  if (!keywordsOk(p, ptext)) return { skipped: "keywords" };
+  const cand = urlsIn(text).filter(amazonCaHostOk);
+  let asin = null;
+  for (const u of cand) { asin = asinOf(u); if (asin) break; }
+  if (!asin) return { skipped: "no-asin" };
+  const gate = confirmGate(ctx, p, "amzca:" + asin);
+  if (gate) return { ...gate, asin };
+  const src = (embeds && embeds[0]) || {};
+  const title = (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
+    || (src.title && !/checkout|success|carted|logs/i.test(src.title) ? src.title : null)
+    || "Amazon.ca restock";
+  const price = firstPrice(embeds, text);
+  const L = amzCaLinks(asin, p.tag || AMAZON_CA_TAG);
+  const ov = ctx.linkFor ? ctx.linkFor("amazonca", asin) : null;
+  if (ov) L.regular = ov;
+  await post({
+    embeds: [{
+      title: String(title).replace(/\[|\]\(.*?\)/g, "").slice(0, 240),
+      url: L.regular,
+      color: 0xf2b33d,
+      thumbnail: firstImage(embeds) ? { url: firstImage(embeds) } : undefined,
+      fields: [
+        { name: "Price", value: price || "\u2014", inline: true },
+        { name: "Buy Now", value: `\uD83C\uDDE8\uD83C\uDDE6 [Amazon.ca](${L.regular})`, inline: true },
+        { name: "\u200b", value: [
+          `\u27A1\uFE0F ${L.regular}`,
+          `\uD83D\uDED2 [Add to Cart](${L.cart})`,
+          `\uD83D\uDCCB [Other Sellers Tab](${L.offers})`,
           `*Note: If the product doesn\u2019t appear at first, try the Add to Cart link or select Amazon from the \u201COther Sellers\u201D tab on the listing.*`,
         ].join("\n\n"), inline: false },
       ],
@@ -417,11 +481,11 @@ async function handleForward(ctx) {
   return { posted: true };
 }
 
-const HANDLERS = { amazon: handleAmazon, target: handleTarget, pc: handlePC, walmart: handleWalmart, forward: handleForward };
+const HANDLERS = { amazon: handleAmazon, amazonca: handleAmazonCa, target: handleTarget, pc: handlePC, walmart: handleWalmart, forward: handleForward };
 
 module.exports = {
   HANDLERS, allText, firstImage, firstPrice, urlsIn, looksPokemon, slugify,
-  asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, fold, burstGate, burstFor, resetBursts, confirmGate, productText, keywordsOk,
+  asinOf, amazonHostOk, amazonCaHostOk, affiliateUrl, amzLinks, amzCaLinks, looksTCG, fold, burstGate, burstFor, resetBursts, confirmGate, productText, keywordsOk,
   targetHostOk, targetTcin, targetUrl, pcSku, pcUrl,
   walmartPid, walmartItems, reduceBatch, walmartEmbeds, richAlertEmbed, forwardMatch,
 };

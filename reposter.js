@@ -64,7 +64,7 @@ function openDb() {
   }
 }
 const db = openDb();
-const RULE_KINDS = ["amazon", "target", "pc", "walmart", "forward"];
+const RULE_KINDS = ["amazon", "amazonca", "target", "pc", "walmart", "forward"];
 const KIND_LIST = RULE_KINDS.map((k) => `'${k}'`).join(",");
 db.exec(`CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,7 +106,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS links (
 const LINKS = new Map();
 const normSku = (retailer, sku) => {
   const s = String(sku || "").trim();
-  return String(retailer || "").toLowerCase() === "amazon" ? s.toUpperCase() : s;
+  return ["amazon", "amazonca"].includes(String(retailer || "").toLowerCase()) ? s.toUpperCase() : s;
 };
 const linkKey = (retailer, sku) => String(retailer || "").toLowerCase() + ":" + normSku(retailer, sku);
 function loadLinks() {
@@ -216,10 +216,10 @@ const COMMANDS = [
         { type: 7, name: "source", description: "Source channel (monitor feed)", required: true },
         { type: 7, name: "target", description: "Target channel (where reposts go)", required: true },
         { type: 3, name: "keywords", description: "forward only: comma-separated keywords" },
-        { type: 3, name: "filter", description: "amazon/target/walmart: tcg, pokemon, or off (walmart default: off)", choices: [{ name: "tcg", value: "tcg" }, { name: "pokemon", value: "pokemon" }, { name: "off", value: "off" }] },
-        { type: 4, name: "confirm", description: "amazon/target/walmart/pc: post after N rapid pings per item (default 1 = immediate)" },
-        { type: 4, name: "cooldown", description: "amazon/target/walmart/pc: minutes to mute an item after it posts (default 60)" },
-        { type: 4, name: "window", description: "amazon/target/walmart/pc: rapid-succession window in minutes (default 10)" },
+        { type: 3, name: "filter", description: "amazon(.ca)/target/walmart: tcg, pokemon, or off (walmart default: off)", choices: [{ name: "tcg", value: "tcg" }, { name: "pokemon", value: "pokemon" }, { name: "off", value: "off" }] },
+        { type: 4, name: "confirm", description: "amazon(.ca)/target/walmart/pc: post after N rapid pings per item (default 1 = immediate)" },
+        { type: 4, name: "cooldown", description: "amazon(.ca)/target/walmart/pc: minutes to mute an item after it posts (default 60)" },
+        { type: 4, name: "window", description: "amazon(.ca)/target/walmart/pc: rapid-succession window in minutes (default 10)" },
       ]},
       { type: 1, name: "list", description: "List routes" },
       { type: 1, name: "remove", description: "Remove a route", options: [{ type: 4, name: "id", description: "Route id", required: true }] },
@@ -231,12 +231,12 @@ const COMMANDS = [
     default_member_permissions: String(PermissionFlagsBits.ManageGuild),
     options: [
       { type: 1, name: "set", description: "Save an affiliate link for a SKU \u2014 reposts use it instead of the source link", options: [
-        { type: 3, name: "retailer", description: "Retailer", required: true, choices: ["amazon", "target", "walmart", "pc"].map((k) => ({ name: k, value: k })) },
+        { type: 3, name: "retailer", description: "Retailer", required: true, choices: ["amazon", "amazonca", "target", "walmart", "pc"].map((k) => ({ name: k, value: k })) },
         { type: 3, name: "sku", description: "ASIN / TCIN / Walmart item ID / PC SKU", required: true },
         { type: 3, name: "url", description: "Full affiliate link to push", required: true },
       ] },
       { type: 1, name: "remove", description: "Remove a saved link", options: [
-        { type: 3, name: "retailer", description: "Retailer", required: true, choices: ["amazon", "target", "walmart", "pc"].map((k) => ({ name: k, value: k })) },
+        { type: 3, name: "retailer", description: "Retailer", required: true, choices: ["amazon", "amazonca", "target", "walmart", "pc"].map((k) => ({ name: k, value: k })) },
         { type: 3, name: "sku", description: "SKU to clear", required: true },
       ] },
       { type: 1, name: "list", description: "List saved links" },
