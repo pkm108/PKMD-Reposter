@@ -13,9 +13,16 @@ intent review per year instead of four.
    Read History on source channels, Send Messages + Embed Links on targets.
 
 ## Routes
-`/route add kind:<amazon|pc|walmart|forward> source:#feed target:#public [keywords] [filter]`
+`/route add kind:<amazon|pc|walmart|forward> source:#feed target:#public [keywords] [filter] [confirm] [cooldown] [window]`
 · `/route list` · `/route toggle id` · `/route remove id` · `/reposter` (status/stats).
 Multiple routes may share one source channel (fan-out). Rules live in SQLite on the volume.
+
+**Amazon route params:** `filter` = `tcg` (default: Pokemon TCG products only) | `pokemon`
+(any Pokemon) | `off`. `confirm:N` posts an item only after N pings for the same ASIN within
+`window` minutes (default 10) — for checkout/monitor feeds where 1-2 pings mean instant sellout.
+After a confirmed post the ASIN is muted for `cooldown` minutes (default 60). Example:
+`/route add kind:amazon source:#monitor-feed target:#restock-alerts confirm:5 cooldown:60`
+(To change an existing route's params: `/route remove` then re-add.)
 
 ## Cutover playbook (zero-risk)
 1. Deploy with `DRY_RUN=1`; add routes mirroring the old bots.

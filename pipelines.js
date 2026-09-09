@@ -92,14 +92,50 @@ function amzLinks(asin, tag = AMAZON_TAG) {
   };
 }
 
+/* TCG-only filter: Pokémon AND a card-product signal in the text. */
+const TCG_RE = /(\btcg\b|trading\s*cards?|booster|elite\s*trainer|\betbs?\b|collection|\btins?\b|blister|\bdecks?\b|premium|\bpacks?\b|box\s*set|bundle|\bcards\b|\bpsa\b|graded)/i;
+function looksTCG(text) { return looksPokemon(text) && TCG_RE.test(String(text || "")); }
+
+/* Burst confirmation + per-item cooldown.
+   need pings for the same (rule, asin) within windowMs before posting;
+   after a confirmed post, that item is muted for cooldownMs. */
+const BURST = new Map();
+function burstFor(key) {
+  if (BURST.size > 2000) { const now = Date.now();
+    for (const [k, r] of BURST) if (!r.hits.length && now > r.coolUntil) BURST.delete(k); }
+  let r = BURST.get(key);
+  if (!r) { r = { hits: [], coolUntil: 0 }; BURST.set(key, r); }
+  return r;
+}
+function burstGate(rec, now, { need, windowMs, cooldownMs }) {
+  if (now < rec.coolUntil) return { allow: false, reason: "cooldown", until: rec.coolUntil };
+  rec.hits = rec.hits.filter((t) => now - t <= windowMs);
+  rec.hits.push(now);
+  if (rec.hits.length < need) return { allow: false, reason: "warming", count: rec.hits.length, need };
+  rec.hits = [];
+  rec.coolUntil = now + cooldownMs;
+  return { allow: true };
+}
+function resetBursts() { BURST.clear(); }
+
 async function handleAmazon(ctx) {
   const { embeds, text, rule, post, dedupe } = ctx;
   const p = rule.params || {};
-  if ((p.filter || "pokemon") !== "off" && !looksPokemon(text)) return { skipped: "filter" };
+  const mode = p.filter || "tcg";
+  if (mode === "tcg" && !looksTCG(text)) return { skipped: "filter" };
+  if (mode === "pokemon" && !looksPokemon(text)) return { skipped: "filter" };
   const cand = urlsIn(text).filter(amazonHostOk);
   const asin = cand.map(asinOf).find(Boolean);
   if (!asin) return { skipped: "no-asin" };
-  if (!dedupe("amz:" + asin)) return { skipped: "dupe" };
+  const need = Math.max(1, parseInt(p.confirm, 10) || 1);
+  if (need > 1) {
+    const windowMs = Math.max(1, parseInt(p.window, 10) || 10) * 60000;
+    const cooldownMs = Math.max(1, parseInt(p.cooldown, 10) || 60) * 60000;
+    const g = burstGate(burstFor(rule.id + ":" + asin), ctx.now || Date.now(), { need, windowMs, cooldownMs });
+    if (!g.allow) return g.reason === "warming"
+      ? { skipped: "warming", asin, count: g.count, need }
+      : { skipped: "cooldown", asin, until: g.until };
+  } else if (!dedupe("amz:" + asin)) return { skipped: "dupe" };
   const src = (embeds && embeds[0]) || {};
   const title = (src.title && !/checkout|success/i.test(src.title) ? src.title : null)
     || (src.fields || []).find((f) => /product|item|title/i.test(f.name || ""))?.value
@@ -242,6 +278,6 @@ const HANDLERS = { amazon: handleAmazon, pc: handlePC, walmart: handleWalmart, f
 
 module.exports = {
   HANDLERS, allText, firstImage, firstPrice, urlsIn, looksPokemon, slugify,
-  asinOf, amazonHostOk, affiliateUrl, amzLinks, pcSku, pcUrl,
+  asinOf, amazonHostOk, affiliateUrl, amzLinks, looksTCG, burstGate, burstFor, resetBursts, pcSku, pcUrl,
   walmartPid, walmartItems, reduceBatch, walmartEmbed, forwardMatch,
 };

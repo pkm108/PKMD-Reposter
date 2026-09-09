@@ -172,7 +172,10 @@ const COMMANDS = [
         { type: 7, name: "source", description: "Source channel (monitor feed)", required: true },
         { type: 7, name: "target", description: "Target channel (where reposts go)", required: true },
         { type: 3, name: "keywords", description: "forward only: comma-separated keywords" },
-        { type: 3, name: "filter", description: "amazon only: pokemon (default) or off", choices: [{ name: "pokemon", value: "pokemon" }, { name: "off", value: "off" }] },
+        { type: 3, name: "filter", description: "amazon only: tcg (default), pokemon, or off", choices: [{ name: "tcg", value: "tcg" }, { name: "pokemon", value: "pokemon" }, { name: "off", value: "off" }] },
+        { type: 4, name: "confirm", description: "amazon only: post after N rapid pings for the same item (default 1 = immediate)" },
+        { type: 4, name: "cooldown", description: "amazon only: minutes to mute an item after it posts (default 60)" },
+        { type: 4, name: "window", description: "amazon only: rapid-succession window in minutes (default 10)" },
       ]},
       { type: 1, name: "list", description: "List routes" },
       { type: 1, name: "remove", description: "Remove a route", options: [{ type: 4, name: "id", description: "Route id", required: true }] },
@@ -198,13 +201,16 @@ client.on(Events.InteractionCreate, async (i) => {
       const kw = i.options.getString("keywords");
       if (kw) params.keywords = kw.split(",").map((s) => s.trim()).filter(Boolean);
       const flt = i.options.getString("filter"); if (flt) params.filter = flt;
+      for (const k of ["confirm", "cooldown", "window"]) {
+        const v = i.options.getInteger(k); if (v) params[k] = v;
+      }
       const info = db.prepare("INSERT INTO rules(kind,source_channel_id,target_channel_id,params,created_at) VALUES(?,?,?,?,?)")
         .run(kind, i.options.getChannel("source").id, i.options.getChannel("target").id, JSON.stringify(params), Date.now());
       reload();
       return i.reply({ flags: MessageFlags.Ephemeral, content: `Route **#${info.lastInsertRowid}** added: ${kind} <#${i.options.getChannel("source").id}> → <#${i.options.getChannel("target").id}>` });
     }
     if (sub === "list") {
-      const lines = RULES.map((r) => `**#${r.id}** ${r.enabled ? "🟢" : "⚪"} ${r.kind} <#${r.source_channel_id}> → <#${r.target_channel_id}>${r.params.keywords ? " · kw: " + r.params.keywords.join(", ") : ""}`);
+      const lines = RULES.map((r) => `**#${r.id}** ${r.enabled ? "🟢" : "⚪"} ${r.kind} <#${r.source_channel_id}> → <#${r.target_channel_id}>${r.params.keywords ? " · kw: " + r.params.keywords.join(", ") : ""}${r.params.filter ? " \u00b7 filter: " + r.params.filter : ""}${r.params.confirm ? ` \u00b7 confirm ${r.params.confirm}\u00d7/${r.params.window || 10}m \u00b7 cooldown ${r.params.cooldown || 60}m` : ""}`);
       return i.reply({ flags: MessageFlags.Ephemeral, content: lines.join("\n") || "No routes yet — `/route add`." });
     }
     if (sub === "remove") {
