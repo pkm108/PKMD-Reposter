@@ -115,6 +115,85 @@ function loadLinks() {
     LINKS.set(linkKey(row.retailer, row.sku), row.url);
 }
 loadLinks();
+
+// ---- control panel (pure builders; component ids are stateless) ----
+const PANEL_RETAILERS = ["amazon", "amazonca", "target", "walmart", "pc"];
+function panelHome() {
+  const routeOpts = RULES.slice(0, 25).map((x) => ({
+    label: `#${x.id} ${x.kind}${x.enabled ? "" : " (paused)"}`.slice(0, 100),
+    description: ((x.params.keywords ? "kw " + x.params.keywords.join(",") + " \u00b7 " : "")
+      + (x.params.confirm ? `confirm ${x.params.confirm}\u00d7` : "") || "tap to manage").slice(0, 100),
+    value: String(x.id),
+  }));
+  const linkOpts = [...LINKS.keys()].slice(0, 25).map((k) => {
+    const [rt, sk] = k.split(":");
+    return { label: `${rt} \u00b7 ${sk}`.slice(0, 100), value: `${rt}|${sk}` };
+  });
+  const rows = [];
+  if (routeOpts.length) rows.push({ type: 1, components: [{ type: 3, custom_id: "pnl:rsel", placeholder: "Manage a route\u2026", options: routeOpts }] });
+  if (linkOpts.length) rows.push({ type: 1, components: [{ type: 3, custom_id: "pnl:lsel", placeholder: "View a preloaded link\u2026", options: linkOpts }] });
+  rows.push({ type: 1, components: [
+    { type: 2, style: 3, custom_id: "pnl:ladd", label: "\u2795 Add / update link" },
+    { type: 2, style: 2, custom_id: "pnl:refresh", label: "\uD83D\uDD04 Refresh" },
+    { type: 2, style: 2, custom_id: "pnl:guide:panel", label: "\uD83D\uDCD6 Guide" },
+  ] });
+  const desc = RULES.map((x) => `**#${x.id}** ${x.enabled ? "\uD83D\uDFE2" : "\u26AA"} ${x.kind} <#${x.source_channel_id}> \u2192 <#${x.target_channel_id}>`).join("\n")
+    || "No routes yet \u2014 `/route add`.";
+  return { embeds: [{ title: "PKMD Reposter \u2014 Control Panel", description: desc.slice(0, 3900), color: 0xf2b33d,
+    footer: { text: `${LINKS.size} preloaded link${LINKS.size === 1 ? "" : "s"} \u00b7 visible only to you` } }], components: rows };
+}
+function routeDetail(x) {
+  const p = x.params || {};
+  const lines = [
+    `**Kind:** ${x.kind}  \u00b7  **Source:** <#${x.source_channel_id}> \u2192 <#${x.target_channel_id}>`,
+    `**Filter:** ${p.filter || "(default: tcg)"}  \u00b7  **Keywords:** ${p.keywords ? p.keywords.join(", ") : "\u2014"}`,
+    `**Confirm:** ${p.confirm ? `${p.confirm}\u00d7 / ${p.window || 10}m \u00b7 cooldown ${p.cooldown || 60}m` : "immediate"}`,
+  ];
+  return { embeds: [{ title: `Route #${x.id} ${x.enabled ? "\uD83D\uDFE2 enabled" : "\u26AA paused"}`, description: lines.join("\n"), color: x.enabled ? 0x1db954 : 0x5a6572 }],
+    components: [{ type: 1, components: [
+      { type: 2, style: x.enabled ? 2 : 3, custom_id: `pnl:rtg:${x.id}`, label: x.enabled ? "\u23F8 Pause" : "\u25B6 Enable" },
+      { type: 2, style: 4, custom_id: `pnl:rrm:${x.id}`, label: "\uD83D\uDDD1 Remove" },
+      { type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Back" },
+    ] }] };
+}
+function linkDetail(rt, sk) {
+  const url = LINKS.get(linkKey(rt, sk));
+  return { embeds: [{ title: `Preloaded link \u2014 ${rt} ${sk}`,
+    description: url ? `Reposts for this SKU use:\n${url}` : "(no longer set)", color: 0xf2b33d }],
+    components: [{ type: 1, components: [
+      { type: 2, style: 4, custom_id: `pnl:lrm:${rt}|${sk}`, label: "\uD83D\uDDD1 Remove link" },
+      { type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Back" },
+    ] }] };
+}
+const LINK_MODAL = { custom_id: "pnl:lmod", title: "Preloaded affiliate link", components: [
+  { type: 1, components: [{ type: 4, custom_id: "retailer", style: 1, required: true, label: "Retailer (amazon/amazonca/target/walmart/pc)" }] },
+  { type: 1, components: [{ type: 4, custom_id: "sku", style: 1, required: true, label: "SKU \u2014 ASIN / TCIN / Walmart item / PC SKU" }] },
+  { type: 1, components: [{ type: 4, custom_id: "url", style: 2, required: true, label: "Full affiliate URL" }] },
+] };
+const GUIDES = {
+  routes: { title: "\uD83D\uDCD6 Routes \u2014 the repost pipelines", text:
+`**/route add kind: source: target:** creates a pipeline. Kinds: **amazon**, **amazonca**, **target**, **pc**, **walmart** (batches into rich embeds), **forward** (keyword mirror).
+**filter** \u2014 tcg (default: Pok\u00e9mon card products only) \u00b7 pokemon (any Pok\u00e9mon) \u00b7 off. Walmart defaults to off.
+**keywords** \u2014 comma list; product text must contain one (accent-proof: "Pokemon" matches "Pok\u00e9mon").
+**confirm N** \u2014 post only after N pings for the same item within **window** minutes (default 10); after posting, the item is muted for **cooldown** minutes (default 60). For checkout/monitor feeds; leave off for one-ping deal feeds.
+**/route list \u00b7 toggle id \u00b7 remove id** \u2014 or just use **/panel**. To change params: remove + re-add.
+Warming/cooldown skips log in Railway as {"skipped":"warming","count":\u2026}.` },
+  links: { title: "\uD83D\uDCD6 Preloaded affiliate links \u2014 /link", text:
+`**/link set retailer: sku: url:** stores a full replacement link per SKU (ASIN / TCIN / Walmart item ID / PC SKU) in SQLite on the volume \u2014 survives redeploys.
+On a matching ping the repost uses **your** link: amazon(.ca) swaps the primary/title/arrow link (Cart & Other Sellers stay tag-built); target/walmart/pc replace it outright.
+**/link list \u00b7 remove** \u2014 or **/panel** \u2192 \u2795 Add / update link (form) and the link dropdown to view/remove.
+Pairs with the app: **/link** controls Discord reposts; the app\u2019s **Admin \u2192 Links** locks control app alerts. Preload both for end-to-end affiliate coverage.` },
+  gates: { title: "\uD83D\uDCD6 Filters & burst gates", text:
+`Filters read **product text only** (title / description / Product fields) \u2014 a monitor\u2019s "Pokemon Deals" footer can\u2019t fool them.
+**tcg** needs a real Pok\u00e9mon signal AND a card-product word (booster, ETB, tin, collection\u2026). **pokemon** needs the brand only.
+**confirm N\u00d7/Wm** counts distinct source messages per item (gateway replays are ignored, logged as replay:true). On the Nth ping inside the window it posts once; **cooldown** then mutes that item. Counters are in-memory \u2014 a redeploy resets warm-ups.` },
+  panel: { title: "\uD83D\uDCD6 Control panel \u2014 /panel", text:
+`**/panel** opens this hub (only you see it). Pick a **route** in the dropdown to pause / enable / remove it (with a confirm step). Pick a **preloaded link** to view or remove it. **\u2795 Add / update link** opens a form \u2014 no command syntax needed. **\uD83D\uDD04 Refresh** redraws after changes. Full guides: **/guide topic:** routes \u00b7 links \u00b7 gates.` },
+};
+function guideEmbed(topic) {
+  const g = GUIDES[topic] || GUIDES.panel;
+  return { flags: MessageFlags.Ephemeral, embeds: [{ title: g.title, description: g.text, color: 0x35d0ba }] };
+}
 const bump = db.prepare("INSERT INTO stats(k,v) VALUES(?,1) ON CONFLICT(k) DO UPDATE SET v=v+1");
 const ruleRows = () => db.prepare("SELECT * FROM rules ORDER BY id").all()
   .map((r) => ({ ...r, params: JSON.parse(r.params || "{}") }));
@@ -242,12 +321,66 @@ const COMMANDS = [
       { type: 1, name: "list", description: "List saved links" },
     ],
   },
+  { name: "panel", description: "Open the reposter control panel (routes + links, no commands needed)",
+    default_member_permissions: String(PermissionFlagsBits.ManageGuild) },
+  { name: "guide", description: "How-to guides for the reposter",
+    default_member_permissions: String(PermissionFlagsBits.ManageGuild),
+    options: [{ type: 3, name: "topic", description: "Which guide", choices: ["routes", "links", "gates", "panel"].map((k) => ({ name: k, value: k })) }] },
   { name: "reposter", description: "Reposter status", default_member_permissions: String(PermissionFlagsBits.ManageGuild) },
 ];
 
+async function handleComponent(i) {
+  if (!i.memberPermissions || !i.memberPermissions.has(PermissionFlagsBits.ManageGuild))
+    return i.reply({ flags: MessageFlags.Ephemeral, content: "Manage Server permission required." });
+  const id = i.customId || "";
+  if (i.isModalSubmit()) {
+    if (id !== "pnl:lmod") return;
+    const retailer = i.fields.getTextInputValue("retailer").trim().toLowerCase();
+    const url = i.fields.getTextInputValue("url").trim();
+    if (!PANEL_RETAILERS.includes(retailer))
+      return i.reply({ flags: MessageFlags.Ephemeral, content: "Retailer must be one of: " + PANEL_RETAILERS.join(", ") + "." });
+    if (!/^https?:\/\//i.test(url))
+      return i.reply({ flags: MessageFlags.Ephemeral, content: "URL must start with http(s)://" });
+    const sku = normSku(retailer, i.fields.getTextInputValue("sku"));
+    db.prepare("INSERT INTO links(retailer,sku,url) VALUES(?,?,?) ON CONFLICT(retailer,sku) DO UPDATE SET url=excluded.url").run(retailer, sku, url);
+    loadLinks();
+    return i.reply({ flags: MessageFlags.Ephemeral, content: `Saved \u2014 **${retailer}** \`${sku}\` will repost with your preloaded link.` });
+  }
+  if (i.isStringSelectMenu()) {
+    if (id === "pnl:rsel") { const x = RULES.find((z) => String(z.id) === i.values[0]); return i.update(x ? routeDetail(x) : panelHome()); }
+    if (id === "pnl:lsel") { const [rt, sk] = i.values[0].split("|"); return i.update(linkDetail(rt, sk)); }
+    return;
+  }
+  if (!i.isButton()) return;
+  if (id === "pnl:home" || id === "pnl:refresh") return i.update(panelHome());
+  if (id === "pnl:ladd") return i.showModal(LINK_MODAL);
+  if (id.startsWith("pnl:guide:")) return i.reply(guideEmbed(id.split(":")[2]));
+  if (id.startsWith("pnl:rtg:")) {
+    const rid = +id.split(":")[2]; const x = RULES.find((z) => z.id === rid);
+    if (!x) return i.update(panelHome());
+    db.prepare("UPDATE rules SET enabled=? WHERE id=?").run(x.enabled ? 0 : 1, rid); reload();
+    return i.update(routeDetail(RULES.find((z) => z.id === rid)));
+  }
+  if (id.startsWith("pnl:rrmc:")) { db.prepare("DELETE FROM rules WHERE id=?").run(+id.split(":")[2]); reload(); return i.update(panelHome()); }
+  if (id.startsWith("pnl:rrm:")) {
+    const rid = id.split(":")[2];
+    return i.update({ embeds: [{ title: `Remove route #${rid}?`, description: "This deletes the route permanently.", color: 0xff6b6b }],
+      components: [{ type: 1, components: [
+        { type: 2, style: 4, custom_id: `pnl:rrmc:${rid}`, label: "Yes, remove it" },
+        { type: 2, style: 2, custom_id: "pnl:home", label: "Cancel" }] }] });
+  }
+  if (id.startsWith("pnl:lrm:")) {
+    const [rt, sk] = id.slice(8).split("|");
+    db.prepare("DELETE FROM links WHERE retailer=? AND sku=?").run(rt, sk); loadLinks();
+    return i.update(panelHome());
+  }
+}
 client.on(Events.InteractionCreate, async (i) => {
   try {
+    if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit()) return handleComponent(i);
     if (!i.isChatInputCommand()) return;
+    if (i.commandName === "panel") return i.reply({ ...panelHome(), flags: MessageFlags.Ephemeral });
+    if (i.commandName === "guide") return i.reply(guideEmbed(i.options.getString("topic") || "panel"));
     if (i.commandName === "reposter") {
       const stats = db.prepare("SELECT k,v FROM stats ORDER BY k").all().map((s) => `${s.k}: ${s.v}`).join(" · ") || "no traffic yet";
       return i.reply({ flags: MessageFlags.Ephemeral, content:
