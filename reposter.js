@@ -160,6 +160,7 @@ function routeDetail(x) {
       { type: 1, components: [
         { type: 2, style: 1, custom_id: `pnl:rcs:${x.id}`, label: "\uD83D\uDCE5 Change source" },
         { type: 2, style: 1, custom_id: `pnl:rct:${x.id}`, label: "\uD83D\uDCE4 Change target" },
+        { type: 2, style: 1, custom_id: `pnl:redit:${x.id}`, label: "\u2699\uFE0F Edit filters & gates" },
       ] },
     ] };
 }
@@ -200,6 +201,40 @@ function newRouteChan(step, kind, src) {
       { type: 1, components: [{ type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Cancel" }] },
     ] };
 }
+function routeEditModal(x) {
+  const p = x.params || {};
+  const ti = (cid, label, val, ph, max) => ({ type: 1, components: [{ type: 4, custom_id: cid, style: 1, required: false,
+    label, value: val || "", placeholder: ph, max_length: max }] });
+  return { custom_id: `pnl:remod:${x.id}`, title: `Route #${x.id} \u2014 filters & gates`, components: [
+    ti("filter", "Filter (tcg / pokemon / off)", p.filter, "blank = default (tcg; walmart: off)", 10),
+    ti("keywords", "Keywords (comma-separated)", p.keywords ? p.keywords.join(", ") : "", "blank = no keyword gate", 200),
+    ti("confirm", "Confirm \u2014 pings needed per item", p.confirm ? String(p.confirm) : "", "blank or 1 = post immediately", 4),
+    ti("window", "Confirm window (minutes)", p.window ? String(p.window) : "", "blank = 10", 4),
+    ti("cooldown", "Per-item cooldown (minutes)", p.cooldown ? String(p.cooldown) : "", "blank = 60", 5),
+  ] };
+}
+/* Pure merge: applies the 5 managed fields onto existing params,
+   preserving anything else (slug, tag, \u2026). Returns { params } or { error }. */
+function applyRouteEdit(existing, f) {
+  const p = { ...(existing || {}) };
+  for (const k of ["filter", "keywords", "confirm", "window", "cooldown"]) delete p[k];
+  const filter = String(f.filter || "").trim().toLowerCase();
+  if (filter) {
+    if (!["tcg", "pokemon", "off"].includes(filter)) return { error: "Filter must be tcg, pokemon, or off (or blank)." };
+    p.filter = filter;
+  }
+  const kws = String(f.keywords || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (kws.length) p.keywords = kws;
+  for (const [k, min] of [["confirm", 2], ["window", 1], ["cooldown", 1]]) {
+    const raw = String(f[k] || "").trim();
+    if (!raw) continue;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 1) return { error: `${k} must be a positive number (or blank).` };
+    if (k === "confirm" && n < min) continue; // 1 = immediate = same as blank
+    p[k] = n;
+  }
+  return { params: p };
+}
 const LINK_MODAL = { custom_id: "pnl:lmod", title: "Preloaded affiliate link", components: [
   { type: 1, components: [{ type: 4, custom_id: "retailer", style: 1, required: true, label: "Retailer (amazon/amazonca/target/walmart/pc)" }] },
   { type: 1, components: [{ type: 4, custom_id: "sku", style: 1, required: true, label: "SKU \u2014 ASIN / TCIN / Walmart item / PC SKU" }] },
@@ -223,7 +258,7 @@ Pairs with the app: **/link** controls Discord reposts; the app\u2019s **Admin \
 **tcg** needs a real Pok\u00e9mon signal AND a card-product word (booster, ETB, tin, collection\u2026). **pokemon** needs the brand only.
 **confirm N\u00d7/Wm** counts distinct source messages per item (gateway replays are ignored, logged as replay:true). On the Nth ping inside the window it posts once; **cooldown** then mutes that item. Counters are in-memory \u2014 a redeploy resets warm-ups.` },
   panel: { title: "\uD83D\uDCD6 Control panel \u2014 /panel", text:
-`**/panel** opens this hub (only you see it). Pick a **route** to pause / enable / remove it (with confirm) \u2014 or tap **\uD83D\uDCE5 Change source / \uD83D\uDCE4 Change target** and select a channel to re-point it, no commands needed. **\u2795 New route** walks kind \u2192 source \u2192 target in three taps (default params; use /route add for keywords/confirm). Multiple targets for one feed = create another route on the same source. **\u2795 Add / update link** opens the link form; **\uD83D\uDD04 Refresh** redraws. Guides: **/guide topic:** routes \u00b7 links \u00b7 gates.` },
+`**/panel** opens this hub (only you see it). Pick a **route** to pause / enable / remove it (with confirm) \u2014 or tap **\uD83D\uDCE5 Change source / \uD83D\uDCE4 Change target** to re-point it, and **\u2699\uFE0F Edit filters & gates** to change keywords, filter, and confirm/window/cooldown in a prefilled form \u2014 no commands, no remove-and-re-add. **\u2795 New route** walks kind \u2192 source \u2192 target in three taps (default params; use /route add for keywords/confirm). Multiple targets for one feed = create another route on the same source. **\u2795 Add / update link** opens the link form; **\uD83D\uDD04 Refresh** redraws. Guides: **/guide topic:** routes \u00b7 links \u00b7 gates.` },
 };
 function guideEmbed(topic) {
   const g = GUIDES[topic] || GUIDES.panel;
@@ -369,6 +404,24 @@ async function handleComponent(i) {
     return i.reply({ flags: MessageFlags.Ephemeral, content: "Manage Server permission required." });
   const id = i.customId || "";
   if (i.isModalSubmit()) {
+    if (id.startsWith("pnl:remod:")) {
+      const rid = +id.split(":")[2];
+      const x = RULES.find((z) => z.id === rid);
+      if (!x) return i.reply({ flags: MessageFlags.Ephemeral, content: "That route no longer exists." });
+      const out = applyRouteEdit(x.params, {
+        filter: i.fields.getTextInputValue("filter"),
+        keywords: i.fields.getTextInputValue("keywords"),
+        confirm: i.fields.getTextInputValue("confirm"),
+        window: i.fields.getTextInputValue("window"),
+        cooldown: i.fields.getTextInputValue("cooldown"),
+      });
+      if (out.error) return i.reply({ flags: MessageFlags.Ephemeral, content: "\u26A0 " + out.error });
+      db.prepare("UPDATE rules SET params=? WHERE id=?").run(JSON.stringify(out.params), rid);
+      reload();
+      const fresh = RULES.find((z) => z.id === rid);
+      if (i.isFromMessage()) return i.update(routeDetail(fresh));
+      return i.reply({ flags: MessageFlags.Ephemeral, content: `Route #${rid} updated.` });
+    }
     if (id !== "pnl:lmod") return;
     const retailer = i.fields.getTextInputValue("retailer").trim().toLowerCase();
     const url = i.fields.getTextInputValue("url").trim();
@@ -414,6 +467,10 @@ async function handleComponent(i) {
   if (id === "pnl:home" || id === "pnl:refresh") return i.update(panelHome());
   if (id === "pnl:nr") return i.update(newRouteKind());
   if (id.startsWith("pnl:rdet:")) { const x = RULES.find((z) => z.id === +id.split(":")[2]); return i.update(x ? routeDetail(x) : panelHome()); }
+  if (id.startsWith("pnl:redit:")) {
+    const x = RULES.find((z) => z.id === +id.split(":")[2]);
+    return x ? i.showModal(routeEditModal(x)) : i.update(panelHome());
+  }
   if (id.startsWith("pnl:rcs:")) return i.update(channelPick("src", id.split(":")[2]));
   if (id.startsWith("pnl:rct:")) return i.update(channelPick("tgt", id.split(":")[2]));
   if (id === "pnl:ladd") return i.showModal(LINK_MODAL);
