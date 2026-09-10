@@ -133,6 +133,7 @@ function panelHome() {
   if (routeOpts.length) rows.push({ type: 1, components: [{ type: 3, custom_id: "pnl:rsel", placeholder: "Manage a route\u2026", options: routeOpts }] });
   if (linkOpts.length) rows.push({ type: 1, components: [{ type: 3, custom_id: "pnl:lsel", placeholder: "View a preloaded link\u2026", options: linkOpts }] });
   rows.push({ type: 1, components: [
+    { type: 2, style: 3, custom_id: "pnl:nr", label: "\u2795 New route" },
     { type: 2, style: 3, custom_id: "pnl:ladd", label: "\u2795 Add / update link" },
     { type: 2, style: 2, custom_id: "pnl:refresh", label: "\uD83D\uDD04 Refresh" },
     { type: 2, style: 2, custom_id: "pnl:guide:panel", label: "\uD83D\uDCD6 Guide" },
@@ -150,11 +151,17 @@ function routeDetail(x) {
     `**Confirm:** ${p.confirm ? `${p.confirm}\u00d7 / ${p.window || 10}m \u00b7 cooldown ${p.cooldown || 60}m` : "immediate"}`,
   ];
   return { embeds: [{ title: `Route #${x.id} ${x.enabled ? "\uD83D\uDFE2 enabled" : "\u26AA paused"}`, description: lines.join("\n"), color: x.enabled ? 0x1db954 : 0x5a6572 }],
-    components: [{ type: 1, components: [
-      { type: 2, style: x.enabled ? 2 : 3, custom_id: `pnl:rtg:${x.id}`, label: x.enabled ? "\u23F8 Pause" : "\u25B6 Enable" },
-      { type: 2, style: 4, custom_id: `pnl:rrm:${x.id}`, label: "\uD83D\uDDD1 Remove" },
-      { type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Back" },
-    ] }] };
+    components: [
+      { type: 1, components: [
+        { type: 2, style: x.enabled ? 2 : 3, custom_id: `pnl:rtg:${x.id}`, label: x.enabled ? "\u23F8 Pause" : "\u25B6 Enable" },
+        { type: 2, style: 4, custom_id: `pnl:rrm:${x.id}`, label: "\uD83D\uDDD1 Remove" },
+        { type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Back" },
+      ] },
+      { type: 1, components: [
+        { type: 2, style: 1, custom_id: `pnl:rcs:${x.id}`, label: "\uD83D\uDCE5 Change source" },
+        { type: 2, style: 1, custom_id: `pnl:rct:${x.id}`, label: "\uD83D\uDCE4 Change target" },
+      ] },
+    ] };
 }
 function linkDetail(rt, sk) {
   const url = LINKS.get(linkKey(rt, sk));
@@ -164,6 +171,34 @@ function linkDetail(rt, sk) {
       { type: 2, style: 4, custom_id: `pnl:lrm:${rt}|${sk}`, label: "\uD83D\uDDD1 Remove link" },
       { type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Back" },
     ] }] };
+}
+function channelPick(which, rid) {
+  const src = which === "src";
+  return { embeds: [{ title: `Route #${rid} \u2014 pick a new ${src ? "source" : "target"} channel`,
+    description: src ? "Messages from the selected channel will feed this route."
+      : "This route\u2019s reposts will be sent to the selected channel.", color: 0xf2b33d }],
+    components: [
+      { type: 1, components: [{ type: 8, custom_id: `pnl:${src ? "rcss" : "rcts"}:${rid}`, placeholder: "Select a channel\u2026", channel_types: [0, 5] }] },
+      { type: 1, components: [{ type: 2, style: 2, custom_id: `pnl:rdet:${rid}`, label: "\u2039 Back" }] },
+    ] };
+}
+function newRouteKind() {
+  return { embeds: [{ title: "New route \u2014 step 1 of 3", description: "Pick the pipeline kind.", color: 0xf2b33d }],
+    components: [
+      { type: 1, components: [{ type: 3, custom_id: "pnl:nrk", placeholder: "Pipeline kind\u2026",
+        options: RULE_KINDS.map((k) => ({ label: k, value: k })) }] },
+      { type: 1, components: [{ type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Cancel" }] },
+    ] };
+}
+function newRouteChan(step, kind, src) {
+  const first = step === "s";
+  return { embeds: [{ title: `New ${kind} route \u2014 step ${first ? 2 : 3} of 3`,
+    description: first ? "Pick the **source** channel (the feed to read)."
+      : `Source: <#${src}>\nNow pick the **target** channel (where reposts go). The route is created immediately with default params \u2014 tcg filter, immediate posting.`, color: 0xf2b33d }],
+    components: [
+      { type: 1, components: [{ type: 8, custom_id: first ? `pnl:nrs:${kind}` : `pnl:nrt:${kind}:${src}`, placeholder: "Select a channel\u2026", channel_types: [0, 5] }] },
+      { type: 1, components: [{ type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Cancel" }] },
+    ] };
 }
 const LINK_MODAL = { custom_id: "pnl:lmod", title: "Preloaded affiliate link", components: [
   { type: 1, components: [{ type: 4, custom_id: "retailer", style: 1, required: true, label: "Retailer (amazon/amazonca/target/walmart/pc)" }] },
@@ -188,7 +223,7 @@ Pairs with the app: **/link** controls Discord reposts; the app\u2019s **Admin \
 **tcg** needs a real Pok\u00e9mon signal AND a card-product word (booster, ETB, tin, collection\u2026). **pokemon** needs the brand only.
 **confirm N\u00d7/Wm** counts distinct source messages per item (gateway replays are ignored, logged as replay:true). On the Nth ping inside the window it posts once; **cooldown** then mutes that item. Counters are in-memory \u2014 a redeploy resets warm-ups.` },
   panel: { title: "\uD83D\uDCD6 Control panel \u2014 /panel", text:
-`**/panel** opens this hub (only you see it). Pick a **route** in the dropdown to pause / enable / remove it (with a confirm step). Pick a **preloaded link** to view or remove it. **\u2795 Add / update link** opens a form \u2014 no command syntax needed. **\uD83D\uDD04 Refresh** redraws after changes. Full guides: **/guide topic:** routes \u00b7 links \u00b7 gates.` },
+`**/panel** opens this hub (only you see it). Pick a **route** to pause / enable / remove it (with confirm) \u2014 or tap **\uD83D\uDCE5 Change source / \uD83D\uDCE4 Change target** and select a channel to re-point it, no commands needed. **\u2795 New route** walks kind \u2192 source \u2192 target in three taps (default params; use /route add for keywords/confirm). Multiple targets for one feed = create another route on the same source. **\u2795 Add / update link** opens the link form; **\uD83D\uDD04 Refresh** redraws. Guides: **/guide topic:** routes \u00b7 links \u00b7 gates.` },
 };
 function guideEmbed(topic) {
   const g = GUIDES[topic] || GUIDES.panel;
@@ -349,10 +384,38 @@ async function handleComponent(i) {
   if (i.isStringSelectMenu()) {
     if (id === "pnl:rsel") { const x = RULES.find((z) => String(z.id) === i.values[0]); return i.update(x ? routeDetail(x) : panelHome()); }
     if (id === "pnl:lsel") { const [rt, sk] = i.values[0].split("|"); return i.update(linkDetail(rt, sk)); }
+    if (id === "pnl:nrk") return i.update(newRouteChan("s", i.values[0]));
+    return;
+  }
+  if (i.isChannelSelectMenu()) {
+    const ch = i.values[0];
+    if (id.startsWith("pnl:rcss:")) {
+      const rid = +id.split(":")[2];
+      db.prepare("UPDATE rules SET source_channel_id=? WHERE id=?").run(ch, rid); reload();
+      const x = RULES.find((z) => z.id === rid); return i.update(x ? routeDetail(x) : panelHome());
+    }
+    if (id.startsWith("pnl:rcts:")) {
+      const rid = +id.split(":")[2];
+      db.prepare("UPDATE rules SET target_channel_id=? WHERE id=?").run(ch, rid); reload();
+      const x = RULES.find((z) => z.id === rid); return i.update(x ? routeDetail(x) : panelHome());
+    }
+    if (id.startsWith("pnl:nrs:")) return i.update(newRouteChan("t", id.split(":")[2], ch));
+    if (id.startsWith("pnl:nrt:")) {
+      const [, , kind, src] = id.split(":");
+      const info = db.prepare("INSERT INTO rules(kind,source_channel_id,target_channel_id,params,enabled,created_at) VALUES(?,?,?,?,1,?)")
+        .run(kind, src, ch, "{}", Date.now());
+      reload();
+      const x = RULES.find((z) => z.id === Number(info.lastInsertRowid));
+      return i.update(x ? routeDetail(x) : panelHome());
+    }
     return;
   }
   if (!i.isButton()) return;
   if (id === "pnl:home" || id === "pnl:refresh") return i.update(panelHome());
+  if (id === "pnl:nr") return i.update(newRouteKind());
+  if (id.startsWith("pnl:rdet:")) { const x = RULES.find((z) => z.id === +id.split(":")[2]); return i.update(x ? routeDetail(x) : panelHome()); }
+  if (id.startsWith("pnl:rcs:")) return i.update(channelPick("src", id.split(":")[2]));
+  if (id.startsWith("pnl:rct:")) return i.update(channelPick("tgt", id.split(":")[2]));
   if (id === "pnl:ladd") return i.showModal(LINK_MODAL);
   if (id.startsWith("pnl:guide:")) return i.reply(guideEmbed(id.split(":")[2]));
   if (id.startsWith("pnl:rtg:")) {
@@ -377,7 +440,7 @@ async function handleComponent(i) {
 }
 client.on(Events.InteractionCreate, async (i) => {
   try {
-    if (i.isButton() || i.isStringSelectMenu() || i.isModalSubmit()) return handleComponent(i);
+    if (i.isButton() || i.isStringSelectMenu() || i.isChannelSelectMenu() || i.isModalSubmit()) return handleComponent(i);
     if (!i.isChatInputCommand()) return;
     if (i.commandName === "panel") return i.reply({ ...panelHome(), flags: MessageFlags.Ephemeral });
     if (i.commandName === "guide") return i.reply(guideEmbed(i.options.getString("topic") || "panel"));
