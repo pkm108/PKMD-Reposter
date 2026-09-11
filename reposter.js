@@ -206,10 +206,10 @@ function routeEditModal(x) {
   const ti = (cid, label, val, ph, max) => ({ type: 1, components: [{ type: 4, custom_id: cid, style: 1, required: false,
     label, value: val || "", placeholder: ph, max_length: max }] });
   return { custom_id: `pnl:remod:${x.id}`, title: `Route #${x.id} \u2014 filters & gates`, components: [
-    ti("filter", "Filter (tcg / pokemon / off)", p.filter, "blank = default (tcg; walmart: off)", 10),
+    ti("filter", "Filter \u2014 what gets through", p.filter, "tcg = Pok\u00e9mon card products only \u00b7 pokemon = anything Pok\u00e9mon \u00b7 off = everything", 10),
     ti("keywords", "Keywords (comma-separated)", p.keywords ? p.keywords.join(", ") : "", "blank = no keyword gate", 200),
-    ti("confirm", "Confirm \u2014 pings needed per item", p.confirm ? String(p.confirm) : "", "blank or 1 = post immediately", 4),
-    ti("window", "Confirm window (minutes)", p.window ? String(p.window) : "", "blank = 10", 4),
+    ti("confirm", "Confirm \u2014 pings needed per item", p.confirm ? String(p.confirm) : "", "post after N pings inside the window below \u00b7 blank = immediately", 4),
+    ti("window", "Confirm window (minutes)", p.window ? String(p.window) : "", "pings must land within this many minutes to count \u00b7 blank = 10", 4),
     ti("cooldown", "Per-item cooldown (minutes)", p.cooldown ? String(p.cooldown) : "", "blank = 60", 5),
   ] };
 }
@@ -235,11 +235,28 @@ function applyRouteEdit(existing, f) {
   }
   return { params: p };
 }
-const LINK_MODAL = { custom_id: "pnl:lmod", title: "Preloaded affiliate link", components: [
-  { type: 1, components: [{ type: 4, custom_id: "retailer", style: 1, required: true, label: "Retailer (amazon/amazonca/target/walmart/pc)" }] },
-  { type: 1, components: [{ type: 4, custom_id: "sku", style: 1, required: true, label: "SKU \u2014 ASIN / TCIN / Walmart item / PC SKU" }] },
-  { type: 1, components: [{ type: 4, custom_id: "url", style: 2, required: true, label: "Full affiliate URL" }] },
-] };
+function linkRetailerPick() {
+  const counts = {};
+  for (const x of RULES) if (PANEL_RETAILERS.includes(x.kind)) counts[x.kind] = (counts[x.kind] || 0) + 1;
+  const ids = PANEL_RETAILERS.filter((k) => counts[k]);
+  const opts = (ids.length ? ids : PANEL_RETAILERS).map((k) => ({
+    label: k, value: k,
+    description: counts[k] ? `${counts[k]} route${counts[k] === 1 ? "" : "s"} on this retailer` : "no routes yet",
+  }));
+  return { embeds: [{ title: "Preloaded link \u2014 pick the retailer", color: 0xf2b33d,
+    description: "The form opens next asking only SKU + URL \u2014 no retailer typing, no typos." }],
+    components: [
+      { type: 1, components: [{ type: 3, custom_id: "pnl:lret", placeholder: "Retailer\u2026", options: opts }] },
+      { type: 1, components: [{ type: 2, style: 2, custom_id: "pnl:home", label: "\u2039 Cancel" }] },
+    ] };
+}
+function linkModal(retailer) {
+  return { custom_id: `pnl:lmod:${retailer}`, title: `Preloaded link \u2014 ${retailer}`, components: [
+    { type: 1, components: [{ type: 4, custom_id: "sku", style: 1, required: true, label: "SKU \u2014 ASIN / TCIN / Walmart item / PC SKU",
+      placeholder: "works even before the product first appears in the feed" }] },
+    { type: 1, components: [{ type: 4, custom_id: "url", style: 2, required: true, label: "Full affiliate URL" }] },
+  ] };
+}
 const GUIDES = {
   routes: { title: "\uD83D\uDCD6 Routes \u2014 the repost pipelines", text:
 `**/route add kind: source: target:** creates a pipeline. Kinds: **amazon**, **amazonca**, **target**, **pc**, **walmart** (batches into rich embeds), **forward** (keyword mirror).
@@ -252,7 +269,7 @@ Warming/cooldown skips log in Railway as {"skipped":"warming","count":\u2026}.` 
 `**/link set retailer: sku: url:** stores a full replacement link per SKU (ASIN / TCIN / Walmart item ID / PC SKU) in SQLite on the volume \u2014 survives redeploys.
 On a matching ping the repost uses **your** link: amazon(.ca) swaps the primary/title/arrow link (Cart & Other Sellers stay tag-built); target/walmart/pc replace it outright.
 **/link list \u00b7 remove** \u2014 or **/panel** \u2192 \u2795 Add / update link (form) and the link dropdown to view/remove.
-Pairs with the app: **/link** controls Discord reposts; the app\u2019s **Admin \u2192 Links** locks control app alerts. Preload both for end-to-end affiliate coverage.` },
+Preloading works **before a product ever appears** \u2014 store a TCIN/ASIN today and the very first matching ping reposts your link. Pairs with the app: **/link** controls Discord reposts; the app\u2019s **Admin \u2192 Links** locks control app alerts (product-keyed, so the item must exist there first \u2014 the app\u2019s pre-load equivalent is affiliate.json skus).` },
   gates: { title: "\uD83D\uDCD6 Filters & burst gates", text:
 `Filters read **product text only** (title / description / Product fields) \u2014 a monitor\u2019s "Pokemon Deals" footer can\u2019t fool them.
 **tcg** needs a real Pok\u00e9mon signal AND a card-product word (booster, ETB, tin, collection\u2026). **pokemon** needs the brand only.
@@ -422,8 +439,9 @@ async function handleComponent(i) {
       if (i.isFromMessage()) return i.update(routeDetail(fresh));
       return i.reply({ flags: MessageFlags.Ephemeral, content: `Route #${rid} updated.` });
     }
-    if (id !== "pnl:lmod") return;
-    const retailer = i.fields.getTextInputValue("retailer").trim().toLowerCase();
+    if (!id.startsWith("pnl:lmod")) return;
+    const fromId = id.split(":")[2];
+    const retailer = (fromId || i.fields.getTextInputValue("retailer")).trim().toLowerCase();
     const url = i.fields.getTextInputValue("url").trim();
     if (!PANEL_RETAILERS.includes(retailer))
       return i.reply({ flags: MessageFlags.Ephemeral, content: "Retailer must be one of: " + PANEL_RETAILERS.join(", ") + "." });
@@ -432,12 +450,14 @@ async function handleComponent(i) {
     const sku = normSku(retailer, i.fields.getTextInputValue("sku"));
     db.prepare("INSERT INTO links(retailer,sku,url) VALUES(?,?,?) ON CONFLICT(retailer,sku) DO UPDATE SET url=excluded.url").run(retailer, sku, url);
     loadLinks();
+    if (i.isFromMessage()) return i.update(panelHome());
     return i.reply({ flags: MessageFlags.Ephemeral, content: `Saved \u2014 **${retailer}** \`${sku}\` will repost with your preloaded link.` });
   }
   if (i.isStringSelectMenu()) {
     if (id === "pnl:rsel") { const x = RULES.find((z) => String(z.id) === i.values[0]); return i.update(x ? routeDetail(x) : panelHome()); }
     if (id === "pnl:lsel") { const [rt, sk] = i.values[0].split("|"); return i.update(linkDetail(rt, sk)); }
     if (id === "pnl:nrk") return i.update(newRouteChan("s", i.values[0]));
+    if (id === "pnl:lret") return i.showModal(linkModal(i.values[0]));
     return;
   }
   if (i.isChannelSelectMenu()) {
@@ -473,7 +493,7 @@ async function handleComponent(i) {
   }
   if (id.startsWith("pnl:rcs:")) return i.update(channelPick("src", id.split(":")[2]));
   if (id.startsWith("pnl:rct:")) return i.update(channelPick("tgt", id.split(":")[2]));
-  if (id === "pnl:ladd") return i.showModal(LINK_MODAL);
+  if (id === "pnl:ladd") return i.update(linkRetailerPick());
   if (id.startsWith("pnl:guide:")) return i.reply(guideEmbed(id.split(":")[2]));
   if (id.startsWith("pnl:rtg:")) {
     const rid = +id.split(":")[2]; const x = RULES.find((z) => z.id === rid);
