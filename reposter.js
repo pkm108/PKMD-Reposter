@@ -134,6 +134,7 @@ function panelHome() {
   if (linkOpts.length) rows.push({ type: 1, components: [{ type: 3, custom_id: "pnl:lsel", placeholder: "View a preloaded link\u2026", options: linkOpts }] });
   rows.push({ type: 1, components: [
     { type: 2, style: 3, custom_id: "pnl:nr", label: "\u2795 New route" },
+    { type: 2, style: 2, custom_id: "pnl:stats", label: "\uD83D\uDCCA Stats" },
     { type: 2, style: 3, custom_id: "pnl:ladd", label: "\u2795 Add / update link" },
     { type: 2, style: 2, custom_id: "pnl:refresh", label: "\uD83D\uDD04 Refresh" },
     { type: 2, style: 2, custom_id: "pnl:guide:panel", label: "\uD83D\uDCD6 Guide" },
@@ -277,6 +278,13 @@ Preloading works **before a product ever appears** \u2014 store a TCIN/ASIN toda
   panel: { title: "\uD83D\uDCD6 Control panel \u2014 /panel", text:
 `**/panel** opens this hub (only you see it). Pick a **route** to pause / enable / remove it (with confirm) \u2014 or tap **\uD83D\uDCE5 Change source / \uD83D\uDCE4 Change target** to re-point it, and **\u2699\uFE0F Edit filters & gates** to change keywords, filter, and confirm/window/cooldown in a prefilled form \u2014 no commands, no remove-and-re-add. **\u2795 New route** walks kind \u2192 source \u2192 target in three taps (default params; use /route add for keywords/confirm). Multiple targets for one feed = create another route on the same source. **\u2795 Add / update link** opens the link form; **\uD83D\uDD04 Refresh** redraws. Guides: **/guide topic:** routes \u00b7 links \u00b7 gates.` },
 };
+function statsEmbed(statRows) {
+  const lines = statRows.map((s) => `**${s.k}**: ${s.v}`).join("\n") || "No traffic yet.";
+  const up = Math.floor(process.uptime());
+  const h = Math.floor(up / 3600), mn = Math.floor((up % 3600) / 60);
+  return { flags: MessageFlags.Ephemeral, embeds: [{ title: "\uD83D\uDCCA Reposter stats", color: 0x35d0ba,
+    description: `${DRY_RUN ? "\u26A0 **DRY RUN** \u2014 nothing is actually posting\n" : ""}Routes: **${RULES.filter((x) => x.enabled).length}/${RULES.length} enabled** \u00b7 Preloaded links: **${LINKS.size}**\nUptime: **${h}h ${mn}m** (burst counters reset on redeploy)\n\n${lines}` }] };
+}
 function guideEmbed(topic) {
   const g = GUIDES[topic] || GUIDES.panel;
   return { flags: MessageFlags.Ephemeral, embeds: [{ title: g.title, description: g.text, color: 0x35d0ba }] };
@@ -486,6 +494,7 @@ async function handleComponent(i) {
   if (!i.isButton()) return;
   if (id === "pnl:home" || id === "pnl:refresh") return i.update(panelHome());
   if (id === "pnl:nr") return i.update(newRouteKind());
+  if (id === "pnl:stats") return i.reply(statsEmbed(db.prepare("SELECT k,v FROM stats ORDER BY k").all()));
   if (id.startsWith("pnl:rdet:")) { const x = RULES.find((z) => z.id === +id.split(":")[2]); return i.update(x ? routeDetail(x) : panelHome()); }
   if (id.startsWith("pnl:redit:")) {
     const x = RULES.find((z) => z.id === +id.split(":")[2]);
